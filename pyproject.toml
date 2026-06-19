@@ -1,0 +1,74 @@
+[project]
+name = "geryonmcp"
+# 버전 정책: 유의적 버전(SemVer) MAJOR.MINOR.PATCH
+#   MAJOR = 비호환(breaking) 변경 · MINOR = 하위호환 기능 추가 · PATCH = 하위호환 버그 수정.
+#   1.0.0 = 첫 안정 공개(공개 API 안정화 선언).
+version = "1.0.0"
+description = "Self-hosted, offline, CPU-only integration search engine MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "GeryonMCP contributors" }]
+keywords = ["mcp", "search", "confluence", "offline", "cpu", "rerank", "self-hosted"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Text Processing :: Indexing",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "fastmcp>=0.4.1",
+    "pydantic>=2.0.0",
+    "beautifulsoup4>=4.12.0",
+    "markdownify>=0.11.0",
+    "fastembed>=0.2.0",
+    "sqlite-vec>=0.1.0",
+    "pyyaml>=6.0.0",
+    "onnx>=1.15.0",  # rerank int8 동적 양자화(GERYON_RERANK_QUANTIZE, 기본 ON)
+    "sympy>=1.12",   # onnxruntime int8 양자화의 symbolic shape inference 필요(없으면 fp32 폴백)
+]
+
+[project.urls]
+Homepage = "https://github.com/TaewonyNet/GeryonMCP"
+Repository = "https://github.com/TaewonyNet/GeryonMCP"
+Issues = "https://github.com/TaewonyNet/GeryonMCP/issues"
+
+[project.scripts]
+geryon = "geryon.cli:main"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint.per-file-ignores]
+# 테스트는 src 경로 주입을 위해 import 위치/방식을 의도적으로 사용한다.
+"tests/*" = ["E402", "E401", "E701", "E702", "F841"]
+# scripts/ 는 일회성 백필·유지보수 도구 — 스타일 규칙을 완화한다.
+"scripts/*" = ["E402", "E401", "E701", "E702"]
+
+[tool.pytest.ini_options]
+# 테스트는 tests/ 에만 있다. 루트 전체 수집 시 gitignore된 데이터/심링크
+# (예: confluence_db → 외부 Bronze)를 따라 들어가 수집이 깨지므로 범위를 고정한다.
+testpaths = ["tests"]
+
+[tool.mypy]
+mypy_path = "src"
+explicit_package_bases = true
+namespace_packages = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/geryon"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]

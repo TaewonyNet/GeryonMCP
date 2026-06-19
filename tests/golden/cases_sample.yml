@@ -1,0 +1,50 @@
+# 골든 테스트셋 샘플 — `geryon demo` 의 가상 문서 6건 기준.
+# 작성 노하우는 docs/GOLDEN_AND_DICTIONARY.md 참고. 실제 위키에선 본인 정답 문서로 교체하세요.
+#
+# 형식: query(질의) · expected_title(정답, top_k 안에 있어야 통과) · top_k · notes
+cases:
+  # ── ① 기본형 ────────────────────────────────────────────────
+  - query: "무중단 배포 절차"
+    expected_title: "서버 배포 가이드"
+    top_k: 3
+    notes: "기본형"
+  - query: "연차 휴가 정책"
+    expected_title: "휴가 정책"
+    top_k: 3
+    notes: "기본형"
+
+  # ── ② 조사 복합형 (한국어 형태 견고성) ───────────────────────
+  - query: "배포를 어떻게 하나요"
+    expected_title: "서버 배포 가이드"
+    top_k: 5
+    notes: "조사형: 배포→배포를"
+  - query: "백업은 얼마나 자주 하나요"
+    expected_title: "데이터 백업 절차"
+    top_k: 5
+    notes: "조사형: 백업→백업은"
+
+  # ── ③ 번역 왕복 (어휘 다양성) ────────────────────────────────
+  - query: "트래픽 끊김 없이 서버 교체하는 법"
+    expected_title: "서버 배포 가이드"
+    top_k: 5
+    notes: "번역왕복: zero-downtime deployment → 다른 어휘"
+  - query: "코드 변경 검토 후 합치는 규칙"
+    expected_title: "코드 리뷰 규칙"
+    top_k: 5
+    notes: "번역왕복: code review/merge → 풀어쓰기"
+
+  # ── ④ LLM 방식 (핵심 명사구 압축) ────────────────────────────
+  - query: "OAuth2 토큰 인증"
+    expected_title: "API 인증 방법"
+    top_k: 3
+    notes: "LLM 명사구 압축"
+  - query: "신규 입사 온보딩"
+    expected_title: "신규 입사자 온보딩 체크리스트"
+    top_k: 3
+    notes: "LLM 명사구 압축"
+
+  # ── ⑤ 동의어 의존 (사전 적용 전후로 통과율 변화) ──────────────
+  - query: "디플로이 방법"
+    expected_title: "서버 배포 가이드"
+    top_k: 5
+    notes: "동의어 필요: 디플로이→배포 (dictionary.sample.yaml 적용 시 통과)"

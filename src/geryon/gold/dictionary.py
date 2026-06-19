@@ -1,0 +1,1 @@
+# Gold Layer dictionary definitions

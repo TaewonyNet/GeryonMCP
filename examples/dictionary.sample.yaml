@@ -1,0 +1,35 @@
+# 동의어 사전 샘플 — ~/.geryon/gold/dictionary.yaml 로 복사해 사용.
+# 작성 노하우: docs/GOLDEN_AND_DICTIONARY.md
+# 형식: term(원어) · synonyms(확장어들) · boost(가중, 기본 1.0) · scope(global|user)
+
+# ── 데모 문서와 연결되는 유의어 (geryon demo 로 효과 확인 가능) ──
+- term: 배포
+  synonyms: [deploy, 디플로이, 배포하기]
+  boost: 1.0
+- term: 백업
+  synonyms: [backup, 백업본]
+- term: 인증
+  synonyms: [auth, authentication, 오쓰]
+- term: 리뷰
+  synonyms: [review, 코드리뷰, 검토]
+
+# ── 영–한 음차 동의어 (가장 효율 높음 — 변형까지 모두 등록) ──
+- term: 슈퍼셋
+  synonyms: [Superset, 수퍼셋]        # 표기 변형(슈퍼셋/수퍼셋) 함께
+- term: 드루이드
+  synonyms: [Druid]
+- term: 쿠버네티스
+  synonyms: [Kubernetes, k8s, 쿠버]
+- term: 지씨피
+  synonyms: [GCP, "Google Cloud"]
+
+# ── 약어 ↔ 풀네임 ──
+- term: CI
+  synonyms: [지속통합, "Continuous Integration"]
+- term: PR
+  synonyms: ["Pull Request", 풀리퀘스트, 머지요청]
+
+# ── 사내 용어/유의어 (예시 — 실제 조직 용어로 교체) ──
+- term: 장애
+  synonyms: [인시던트, incident, 이슈]
+  boost: 1.2                          # 중요 용어는 가중 ↑
