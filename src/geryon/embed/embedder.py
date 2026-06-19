@@ -1,5 +1,6 @@
 from fastembed import TextEmbedding
 from fastembed.common.model_description import PoolingType, ModelSource
+from geryon.config import MODEL_CACHE_DIR
 from geryon.domain.models import Chunk
 
 _MODEL_CACHE: dict[str, TextEmbedding] = {}
@@ -18,7 +19,8 @@ def _get_model(model_name: str) -> TextEmbedding:
             )
         except Exception:
             pass
-        _MODEL_CACHE[model_name] = TextEmbedding(model_name=model_name)
+        # 통합 모델 캐시(rerank 와 동일 디렉터리) — 폐쇄망 반입 단순화 + /tmp 휘발 방지.
+        _MODEL_CACHE[model_name] = TextEmbedding(model_name=model_name, cache_dir=MODEL_CACHE_DIR)
     return _MODEL_CACHE[model_name]
 
 

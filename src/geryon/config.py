@@ -81,7 +81,10 @@ RERANK_THREADS = int(os.getenv("GERYON_RERANK_THREADS", str(os.cpu_count() or 0)
 # ~28% 빠르고 모델 4배↓(1.11→0.28GB)이나 정확도 -6.5%p. fp32 복귀는 GERYON_RERANK_QUANTIZE=0.
 # `onnx` 패키지 필요(pyproject 포함). 양자화 실패 시 fp32 graceful fallback.
 RERANK_QUANTIZE = os.getenv("GERYON_RERANK_QUANTIZE", "1") in ("1", "true", "True")
-RERANK_CACHE_DIR = os.getenv("GERYON_RERANK_CACHE", str(GERYON_DIR / "models"))
+# 모델(임베드 + rerank) 통합 캐시 — 한 디렉터리에 모아 오프라인/폐쇄망 반입을 단순화.
+# (임베드 기본값이 /tmp 였던 휘발 문제도 해소.) GERYON_RERANK_CACHE 는 하위호환 별칭.
+MODEL_CACHE_DIR = os.getenv("GERYON_MODEL_CACHE", str(GERYON_DIR / "models"))
+RERANK_CACHE_DIR = os.getenv("GERYON_RERANK_CACHE", MODEL_CACHE_DIR)
 
 # 자동 유의어 사전(dictionary.auto.yaml) 로드 — 기본 OFF(opt-in).
 # dict_bootstrap 은 코퍼스 괄호병기에서 동의어를 자동 추출하나, 진짜 동의어와
@@ -208,7 +211,8 @@ CONFLUENCE_API_TOKEN=__YOUR_API_TOKEN__
 # GERYON_RERANK_VEC_POOL=0              # 벡터 후보 합류(0=off)
 # GERYON_RERANK_QUANTIZE=1              # int8(1=빠름·모델 4배↓, 0=fp32 정확도)
 # GERYON_RERANK_THREADS=0               # onnxruntime 스레드(0=자동)
-# GERYON_RERANK_CACHE=~/.geryon/models  # 모델 캐시 경로
+# GERYON_MODEL_CACHE=~/.geryon/models   # 임베드+rerank 통합 모델 캐시(폐쇄망 반입 단위)
+# GERYON_RERANK_CACHE=~/.geryon/models  # (하위호환 별칭, 미지정 시 GERYON_MODEL_CACHE 사용)
 
 # ── 8) 로깅 ──
 # GERYON_LOG_LEVEL=INFO

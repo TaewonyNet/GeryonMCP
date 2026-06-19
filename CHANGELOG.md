@@ -5,6 +5,17 @@
 버전은 [유의적 버전(SemVer)](https://semver.org/lang/ko/) `MAJOR.MINOR.PATCH` 를 사용합니다.
 - **MAJOR**: 비호환(breaking) 변경 · **MINOR**: 하위호환 기능 추가 · **PATCH**: 하위호환 버그 수정.
 
+## [1.1.0] - 2026-06-20
+
+폐쇄망(air-gap) 지원 강화.
+
+### Added
+- **폐쇄망 설치 가이드**(`docs/AIRGAP_INSTALL.md`): 오프라인 휠 번들(`pip wheel .`) + 모델 캐시 반입 + 외부빌드 DB 반입(전략 B) 전 과정. 깨끗한 환경·`HF_HUB_OFFLINE=1`에서 설치→모델→검색→MCP 전 과정 실측 검증.
+- **`GERYON_MODEL_CACHE`**: 임베드+rerank **통합 모델 캐시 경로**(기본 `~/.geryon/models`). 폐쇄망 반입 단위가 디렉터리 하나로 단순화. `GERYON_RERANK_CACHE` 는 하위호환 별칭.
+
+### Fixed
+- 임베드 모델이 `/tmp/fastembed_cache`(재부팅 시 휘발)에 별도 캐시되던 문제 — 통합 캐시(`~/.geryon/models`)로 영구화. rerank 모델과 동일 위치.
+
 ## [1.0.0] - 2026-06-18
 
 첫 안정 공개 릴리스 — **공개 API 안정화 선언**(SemVer 시작). 로컬·무료·오프라인·CPU 전용(≤16GB) 멀티소스 검색 MCP 서버.

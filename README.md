@@ -129,6 +129,7 @@ geryon serve                 # MCP 서버 기동
 ## 문서
 - **[docs/USER_MANUAL.md](docs/USER_MANUAL.md) — 사용 매뉴얼(설치~운영 단계별)**
 - [docs/INSTALL_WALKTHROUGH.md](docs/INSTALL_WALKTHROUGH.md) — 설치부터 MCP 연결까지 검증된 단계별 가이드(최근 한 달 수집·다국어 포함)
+- [docs/AIRGAP_INSTALL.md](docs/AIRGAP_INSTALL.md) — 폐쇄망(인터넷 없는 망) 설치·운영 가이드(오프라인 휠 번들·모델 반입, 검증됨)
 - [docs/GOLDEN_AND_DICTIONARY.md](docs/GOLDEN_AND_DICTIONARY.md) — 골든 테스트셋·동의어 사전 작성 노하우(조사형·번역왕복·영한 음차)
 - [docs/TEAM_DEPLOY.md](docs/TEAM_DEPLOY.md) — 팀 배포(프로젝트에 검색 MCP 붙이기·프로젝트별 인덱스)
 - [docs/EXTENDING_SOURCES.md](docs/EXTENDING_SOURCES.md) — 새 데이터 소스 추가법(Jira·GitHub 등 멀티소스 확장)
