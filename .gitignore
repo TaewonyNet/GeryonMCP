@@ -1,0 +1,47 @@
+# 시크릿/런타임 설정 — 절대 커밋 금지 (API 토큰 등 평문 포함)
+mcp.json
+.env
+.env.*
+*.config.yml
+.config.yml
+secrets.*
+# 단, 샘플(플레이스홀더)은 추적한다 — 신규 사용자 온보딩용
+!.env.sample
+
+# Bronze 원본 데이터 — 대용량, 수집으로 재생성(버전관리 제외)
+# 기본 출력은 모두 bronze/ 아래로 모아 한 줄로 자동 커버한다.
+bronze/
+# 레거시/커스텀 기본 경로 호환
+confluence_db/
+confluence_db_sample/
+repos/
+jira_db/
+
+# Silver 로컬 DB / 모델 캐시 / 런타임 산출물
+*.db
+*.sqlite
+*.sqlite3
+.geryon/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# OpenCode 런타임 세션 상태(커밋 제외)
+.omo/
+
+# rerank 모델 캐시(prefetch 대상, 커밋 금지) / 데이터
+models/
+confluence_db
+*.onnx
+
+# IDE 설정
+.idea/
+.vscode/
