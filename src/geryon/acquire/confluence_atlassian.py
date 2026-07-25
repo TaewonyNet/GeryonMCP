@@ -245,6 +245,63 @@ def _existing_version(meta_path: Path) -> int | None:
         return None
 
 
+def check_space_access(client: "ConfluenceClient", expected: list[str], root: Path) -> list[str]:
+    """설정된 스페이스 중 **지금 접근 불가**인 것을 확정해 반환.
+
+    권한/토큰이 바뀌면 CQL이 조용히 빈 결과를 주므로(0건=최신 상태처럼 보임),
+    '예전엔 되던 스페이스가 안 되는' 상황을 명시적으로 잡아내기 위한 방어선.
+
+    판정: list_spaces(전역 목록)에 없는 후보만 스페이스별 CQL로 1건 확인 —
+    결과가 없으면 접근 불가로 확정(list_spaces 누락되는 개인·비전역 스페이스 오탐 방지).
+    프로브는 재시도 없이(점검이 매 싱크를 느리게 하지 않도록) 최대 MAX_PROBES개까지만.
+    """
+    MAX_PROBES = 30  # 접근 불가 후보가 대량일 때 순차 HTTP 폭주 방지(초과분은 프로브 없이 불가로 간주)
+    if not expected:
+        return []
+    try:
+        accessible = {k for k, _ in client.list_spaces()}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("스페이스 접근 점검 실패(list_spaces): %s — 점검 생략", e)
+        return []
+
+    candidates = [k for k in expected if k not in accessible]
+    if not candidates:
+        return []
+    if not accessible:
+        # 전역 목록이 아예 비었다 = 자격증명이 통째로 무력화 → 후보를 일일이 프로브할 필요 없이 전부 불가.
+        lost = list(candidates)
+    else:
+        lost = []
+        for i, key in enumerate(candidates):
+            if i >= MAX_PROBES:
+                lost.extend(candidates[i:])  # 상한 초과분은 확인 생략하고 불가로 간주
+                break
+            # 전역 목록에 없어도 개인/비전역 스페이스일 수 있어 실제 조회로 확정(재시도 없음)
+            try:
+                raw = client._get(
+                    "/rest/api/content/search",
+                    {"cql": f'type=page and space="{key}" order by lastmodified desc', "limit": 1},
+                    retries=0,
+                )
+                if not raw.get("results"):  # size 대신 실제 결과 유무로 판정
+                    lost.append(key)
+            except Exception:  # noqa: BLE001
+                lost.append(key)  # 조회 자체가 실패하면 접근 불가로 간주
+    if lost:
+        had_data = [k for k in lost if (root / k).is_dir()]
+        logger.warning(
+            "⚠ Confluence 접근 불가 스페이스 %d개: %s%s\n"
+            "   설정(GERYON_CONFLUENCE_SPACES)에는 있으나 현재 계정/토큰으로 조회되지 않습니다.\n"
+            "   자격증명(CONFLUENCE_USERNAME/API_TOKEN)이 바뀌었거나 권한이 회수됐을 수 있어요 — .env 확인 필요.",
+            len(lost),
+            ", ".join(lost[:20]) + (" …" if len(lost) > 20 else ""),
+            f"\n   이 중 {len(had_data)}개는 이전에 수집된 이력이 있습니다(권한 회수 의심): "
+            + ", ".join(had_data[:20]) + (" …" if len(had_data) > 20 else "")
+            if had_data else "",
+        )
+    return lost
+
+
 def acquire(
     days: int | None = DEFAULT_DAYS,
     bronze_dir: str | Path = DEFAULT_BRONZE,
@@ -273,7 +330,12 @@ def acquire(
     prev_as_of = get_as_of(root)  # 직전 수집 시점(manifest)
     added: list[str] = []
     modified: list[str] = []
-    stats = {"pages": 0, "skipped": 0, "attachments": 0, "att_skipped": 0, "errors": 0}
+    stats = {"pages": 0, "skipped": 0, "attachments": 0, "att_skipped": 0, "errors": 0, "access_lost": 0}
+
+    # 방어선: 설정된 스페이스 중 지금 접근 불가인 것을 먼저 경고(권한/토큰 변경으로 조용히 0건 되는 사고 예방)
+    if spaces and not dry_run:
+        lost = check_space_access(client, spaces, root)
+        stats["access_lost"] = len(lost)
 
     for page in client.search_recent(days, since=since, until=until, spaces=spaces):
         if max_pages is not None and (stats["pages"] + stats["skipped"]) >= max_pages:

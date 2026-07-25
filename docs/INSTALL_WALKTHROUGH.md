@@ -49,10 +49,11 @@ CONFLUENCE_API_TOKEN=<발급 토큰>
 ```bash
 geryon sync --source confluence --days 30          # 최근 30일(=한 달) acquire + ingest
 #   --since 2026-01-01 --until 2026-01-31           날짜 구간만
-#   --all                                           전체
+#   --all                                           전체(증분 아님)
 #   (첨부는 기본 미수집=본문만·빠름. 첨부도 받으려면 --attachments)
+#   geryon sync   (--source 생략)                    설정된 모든 소스(confluence+git+jira) 증분
 ```
-- `sync` = `acquire`(외부→Bronze) + `ingest`(Bronze→검색 DB)를 한 번에.
+- `sync` = `acquire`(외부→Bronze) + `ingest`(Bronze→검색 DB)를 한 번에. `--source` 를 생략하면 세 소스를 한 인덱스로 통합 수집(한 소스 실패해도 나머지는 계속).
 - **최초 실행은 전체 색인**, 이후 자동 증분. 색인이 끝나면 검색은 오프라인.
 - 점검:
 ```bash
@@ -63,7 +64,7 @@ geryon health              # "System healthy."
 ## 6. MCP 클라이언트 연결
 `geryon serve` 는 표준 **stdio MCP 서버**입니다. 클라이언트 설정에 등록합니다.
 
-**Claude Desktop / 호환 클라이언트** (`Settings → Developer → Edit Config`):
+**빠른 시작 — 모든 클라이언트 공통 JSON:**
 ```json
 {
   "mcpServers": {
@@ -71,22 +72,14 @@ geryon health              # "System healthy."
   }
 }
 ```
-- **기본이 아닌 DB**(예: 팀 공유 DB)를 쓰면 `env` 로 경로를 줍니다:
-```json
-{
-  "mcpServers": {
-    "geryon": {
-      "command": "geryon",
-      "args": ["serve"],
-      "env": { "GERYON_DB": "/path/to/shared/geryon.db" }
-    }
-  }
-}
-```
-- 격리 venv 설치면 `"command"` 를 `/abs/path/.venv/bin/geryon` 로.
+- **격리 venv 설치**: `"command"` 를 `/abs/path/.venv/bin/geryon` 로.
+- **팀 공유 DB**: `"env": { "GERYON_DB": "/path/to/shared/geryon.db" }` 추가.
 
 저장 후 클라이언트를 재시작하면 도구가 나타납니다. 제공 도구:
 `search` · `advanced_search` · `get_related` · `get_document` · `browse` · `list_sources` · `reindex`
+
+**Claude Code, Cursor, Claude Desktop, VS Code, Zed별 상세 설정 및 자동 싱크 데몬 연동 방법:**
+→ **[MCP_INSTALL.md](MCP_INSTALL.md)**
 
 ### 연결이 됐는지 확인
 클라이언트에서 "배포 가이드 찾아줘" 처럼 물으면 `search` 가 호출돼 결과가 옵니다. MCP 클라이언트 없이 **CLI로 같은 검색을 바로** 확인할 수도 있습니다(serve 와 동일 코어):

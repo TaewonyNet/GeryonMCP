@@ -27,6 +27,8 @@
 
 > `GERYON_DB` 로 이 프로젝트 전용 인덱스를 가리킵니다. `${workspaceFolder}` 가 안 되는 클라이언트는 절대경로/홈경로(`~/.geryon/myproj.db`)로.
 
+> ⚠ **`command: "geryon"` 은 `geryon` 이 PATH 에 있을 때만 동작합니다.** 격리 venv(`.venv/bin/geryon`)나 `uv tool` 로 설치한 경우, 에디터(Claude Desktop 등 GUI 클라이언트)는 셸 PATH 를 상속하지 않아 **"command not found"** 로 서버가 안 뜰 수 있습니다. 이때는 `command` 를 절대경로(예: `/path/to/.venv/bin/geryon`, `uv tool` 이면 `~/.local/bin/geryon`)로 바꾸세요. 자세한 진단은 `docs/MCP_INSTALL.md §8`.
+
 ## 2) 온보딩 — uv + `geryon setup` (맥/우분투/윈도우 공통)
 팀원 OS 가 섞여 있으면(맥·우분투·윈도우) **bash 셸 스크립트(`.sh`)는 윈도우 native 에서 안 돕니다**.
 대신 **uv(크로스 플랫폼 단일 설치) + `geryon setup`(Python CLI)** 조합을 씁니다 — `curl`/`Invoke-WebRequest`/WSL 분기 없이 3 OS 동일.
@@ -62,7 +64,7 @@ geryon setup --db-url "<DB URL>" --db-path .geryon/myproj.db   # 방식 B: 색�
 git pull
 GERYON_DB=.geryon/myproj.db geryon ingest --source git --path "$(pwd)"   # 증분
 ```
-cron/CI로 주기 재색인하면 항상 최신. (자동 수집 acquire는 향후)
+cron/CI로 주기 재색인하면 항상 최신. **자동 수집+색인은 `geryon watch` 데몬**으로 상시 구동할 수 있습니다(기본 10분 간격, acquire+ingest 자동) — 백그라운드 서비스(systemd/launchd/작업 스케줄러) 설정은 `docs/MCP_INSTALL.md §7` 참고.
 
 ## 배포 방식 두 가지
 같은 `mcp.json`(repo 커밋)을 쓰되, 인덱스를 만드는 방법만 다릅니다.
@@ -87,6 +89,29 @@ geryon setup --db-url "<사내 DB 다운로드 URL>" --db-path .geryon/myproj.db
 #      ※ Jupyter 다운로드 URL 은 트리(/tree/...)가 아니라 파일(/files/...) 엔드포인트.
 ```
 `mcp.json` 의 `GERYON_DB` 를 같은 경로(`.geryon/myproj.db` 또는 `~/.geryon/myproj.db`)로 맞춥니다.
+
+**팀원 진입 장벽을 더 낮추려면 — 원클릭 설치 스크립트**: 위 두 단계(`uv tool install` + `geryon setup`)를 한 번에 묶은 템플릿이 [`scripts/team_install_template.py`](../scripts/team_install_template.py) 에 있습니다. 대상 레포로 복사해 상단 상수 4개만 바꾸면 팀원은 `uv run <복사한파일>.py` 한 줄로 설치가 끝납니다.
+```bash
+# 1) 템플릿을 배포 대상 레포로 복사
+cp scripts/team_install_template.py <대상 레포>/team_install.py
+
+# 2) 상단 설정 블록 편집(또는 실행 시 환경변수로 오버라이드)
+#    GERYON_INSTALL_SCP_REMOTE / GERYON_INSTALL_HTTP_BASE
+#    GERYON_INSTALL_DB_FILE    / GERYON_INSTALL_MCP_NAME
+
+# 3) wheel 을 배포 서버에 올리고, 포인터 파일에 실제 파일명을 적어두기
+#    (wheel 파일명은 PEP 440 버전 규격을 지켜야 해서 "latest" 같은 고정 별칭을
+#     파일명 자체로 쓸 수 없다 — 대신 포인터 파일로 간접 참조한다)
+uv build
+cp dist/geryonmcp-*.whl <서버>/                                  # 실제 파일명 그대로 올림
+basename dist/geryonmcp-*.whl > /tmp/LATEST_WHEEL
+cp /tmp/LATEST_WHEEL <서버>/LATEST_WHEEL                          # 매 릴리스마다 이 한 줄만 덮어쓰기
+
+# 4) team_install.py 를 레포 루트에 커밋 — 팀원은 아래 한 줄로 설치
+uv run team_install.py
+```
+scp(SSH) 를 우선 시도하고 실패하면 HTTP(토큰/비밀번호 인증)로 자동 폴백합니다 — data310 팀이 실전에서 검증한 패턴을 일반화한 것입니다. 스크립트는 먼저 `LATEST_WHEEL` 포인터를 받아 실제 wheel 파일명을 알아낸 뒤 그 파일을 내려받으므로, 릴리스마다 스크립트를 고칠 필요 없이 포인터 파일 한 줄만 갱신하면 됩니다.
+
 - **갱신/배포(`geryon publish`)**: 색인 담당이 한 줄로 올립니다(setup 의 대칭).
   ```bash
   # 원격(scp) 또는 공유 마운트 경로로 업로드(기존 덮어쓰기) + 본인 MCP 등록까지
@@ -109,7 +134,7 @@ geryon setup --db-url "<사내 DB 다운로드 URL>" --db-path .geryon/myproj.db
 
 - **멀티소스도 한 파일**: 같은 `GERYON_DB` 로 Confluence·Git·Jira 를 모두 ingest 하면 한 `geryon.db` 에 통합됩니다(`documents.source` 로 구분, status 의 `by_source` 가 이 구분). 검색은 통합되고 `sources` 필터로 좁히기 — **전송은 여전히 1개**.
   ```bash
-  GERYON_DB=/data/mcp/geryon.db geryon sync --all                          # confluence
+  GERYON_DB=/data/mcp/geryon.db geryon sync --source confluence            # confluence (증분)
   GERYON_DB=/data/mcp/geryon.db geryon ingest --source git  --path <repo>  # git 추가
   GERYON_DB=/data/mcp/geryon.db geryon sync   --source jira --project <키>  # jira 추가
   ```

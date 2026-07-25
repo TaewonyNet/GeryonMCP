@@ -91,6 +91,29 @@ def _sample_search(db_path) -> None:
         print(f"  (샘플 검색 건너뜀: {te})", file=sys.stderr)
 
 
+def _geryon_cmd_prefix() -> list[str]:
+    """자식 프로세스로 geryon 을 다시 부를 실행 프리픽스.
+
+    geryon 이 PATH 에 있으면 그 실행파일을, 없으면(격리 venv) 현재 인터프리터 + 이 스크립트 경로.
+    sys.executable(=python) 단독은 `python sync` 가 되어 깨지므로 스크립트 경로를 반드시 동반한다.
+    """
+    import shutil
+    which = shutil.which("geryon")
+    return [which] if which else [sys.executable, sys.argv[0]]
+
+
+def _warn_access_lost(stats: dict) -> None:
+    """acquire 결과에 접근 불가 스페이스가 있으면 눈에 띄는 경고 배너 출력."""
+    n = (stats or {}).get("access_lost", 0)
+    if not n:
+        return
+    print(
+        f"  ⚠ 접근 불가 스페이스 {n}개 — 설정에는 있으나 현재 계정/토큰으로 조회 안 됨.\n"
+        f"    자격증명(.env: CONFLUENCE_USERNAME/API_TOKEN) 변경·권한 회수 의심. 상세는 위 WARNING 로그 참고.",
+        file=sys.stderr,
+    )
+
+
 def _ingest_guide(stats: dict) -> None:
     """ingest/sync 결과를 사람이 읽기 쉬운 가이드로 출력(최초 실행 안내 포함)."""
     ins = stats.get("inserted", 0)
@@ -418,7 +441,7 @@ def main() -> None:
 
     # Acquire subcommand — 외부 소스 → Bronze 원본 파일(멱등/증분 수집)
     def _add_acquire_args(p) -> None:
-        p.add_argument("--source", type=str, default="confluence", help="수집 소스: confluence | git")
+        p.add_argument("--source", type=str, default=None, help="수집 소스: confluence | git | jira (기본: sync는 전체, acquire/watch는 confluence)")
         p.add_argument("--bronze-dir", type=str, default=None, help="Bronze 출력 경로(기본: confluence→confluence_db, git→repos)")
         p.add_argument("--days", type=int, default=None,
                        help="[confluence/jira] 최근 N일 수정분. 미지정 시 기본=DB 워터마크 이후(증분), DB가 비었으면 30일")
@@ -459,6 +482,15 @@ def main() -> None:
     sync_parser.add_argument("--no-vector", action="store_true", help="[ingest] 벡터 임베딩 생략")
     sync_parser.add_argument("--full", action="store_true", help="[ingest] 전체 재구축")
     sync_parser.add_argument("--no-prune", action="store_true", help="[ingest] Bronze에 없는 DB 문서 삭제 안 함")
+
+    # Watch subcommand — 자동 싱크 데몬(기본 10분 간격)
+    watch_parser = subparsers.add_parser("watch", help="자동 싱크 데몬 — sync 를 주기적으로 실행(기본 10분)")
+    _add_acquire_args(watch_parser)
+    watch_parser.add_argument("--interval", type=int, default=600,
+                              help="싱크 간격 초(기본 600 = 10분)")
+    watch_parser.add_argument("--no-vector", action="store_true", help="[ingest] 벡터 임베딩 생략")
+    watch_parser.add_argument("--full", action="store_true", help="[ingest] 매회 전체 재구축")
+    watch_parser.add_argument("--no-prune", action="store_true", help="[ingest] Bronze에 없는 DB 문서 삭제 안 함")
 
     # Reindex subcommand
     reindex_parser = subparsers.add_parser("reindex", help="Reindex records")
@@ -539,37 +571,144 @@ def main() -> None:
             acq, bronze = _build_acquirer(args, source)
             stats = acq.acquire(force=args.force, dry_run=args.dry_run)
             print(f"Acquire 완료! Bronze: {bronze}  Stats: {stats}")
+            _warn_access_lost(stats)
         except Exception as e:
             print(f"Error running acquire: {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "sync":
-        source = args.source or "confluence"
-        print(f"Sync source: {source} (acquire + ingest)")
-        try:
-            # 1) acquire
-            acq, bronze = _build_acquirer(args, source)
-            print("▶ acquire → Bronze")
-            astats = acq.acquire(force=args.force, dry_run=args.dry_run)
-            print(f"  acquire: {astats}")
-            if args.dry_run:
-                print("Sync(dry-run) 완료 — ingest 는 생략.")
-                return
-            # 2) ingest (acquire 가 만든 Bronze 를 색인)
-            connector_cls = CONNECTOR_REGISTRY.get(source)
-            if not connector_cls:
-                print(f"ingest 미지원 소스: {source}", file=sys.stderr)
-                sys.exit(1)
-            connector = connector_cls(bronze)
-            vs = None if getattr(args, "no_vector", False) else VectorStore()
-            pipeline = IngestionPipeline(vector_store=vs, tree_store=TreeStore())
-            print("▶ ingest → DB")
-            istats = pipeline.run(connector, full_reindex=args.full, prune=not args.no_prune,
-                                  incremental=not args.full)  # 기본 증분, --full=전체
-            print(f"Sync 완료! acquire={astats}")
-            _ingest_guide(istats)
-        except Exception as e:
-            print(f"Error running sync: {e}", file=sys.stderr)
+        from geryon.acquire import ACQUIRER_REGISTRY as _ACQ_REG
+        sources = [args.source] if args.source else list(_ACQ_REG.keys())
+        failed: list[str] = []
+        for source in sources:
+            print(f"\nSync source: {source} (acquire + ingest)")
+            try:
+                # 1) acquire
+                acq, bronze = _build_acquirer(args, source)
+                print("▶ acquire → Bronze")
+                astats = acq.acquire(force=args.force, dry_run=args.dry_run)
+                print(f"  acquire: {astats}")
+                _warn_access_lost(astats)
+                if args.dry_run:
+                    print(f"Sync(dry-run) 완료({source}) — ingest 는 생략.")
+                    continue
+                # 2) ingest (acquire 가 만든 Bronze 를 색인)
+                connector_cls = CONNECTOR_REGISTRY.get(source)
+                if not connector_cls:
+                    print(f"ingest 미지원 소스: {source} — 건너뜀", file=sys.stderr)
+                    continue
+                connector = connector_cls(bronze)
+                vs = None if getattr(args, "no_vector", False) else VectorStore()
+                pipeline = IngestionPipeline(vector_store=vs, tree_store=TreeStore())
+                print("▶ ingest → DB")
+                istats = pipeline.run(connector, full_reindex=args.full, prune=not args.no_prune,
+                                      incremental=not args.full)
+                print(f"Sync 완료! source={source} acquire={astats}")
+                _ingest_guide(istats)
+            except Exception as e:
+                # 한 소스 실패가 나머지 소스를 막지 않도록 계속 진행(자동 데몬 대비) — 실패는 끝에서 집계
+                print(f"Error running sync({source}): {e} — 다음 소스로 계속", file=sys.stderr)
+                failed.append(source)
+        if failed:
+            print(f"\n⚠ 일부 소스 실패: {', '.join(failed)} (나머지는 정상 처리)", file=sys.stderr)
             sys.exit(1)
+    elif args.command == "watch":
+        import signal
+        import time
+        import subprocess
+        from datetime import timedelta
+
+        source = args.source  # None = 전체(confluence+git+jira) — sync 의 멀티소스 경로 상속
+        source_label = source or "전체(confluence+git+jira)"
+        interval = args.interval
+        if interval < 5:
+            print(f"[geryon watch] --interval {interval} 은(는) 너무 짧아 5초로 조정합니다(타이트 루프 방지).",
+                  file=sys.stderr)
+            interval = 5
+        mins, secs = divmod(interval, 60)
+        interval_label = f"{mins}분" if secs == 0 else f"{mins}분 {secs}초" if mins else f"{secs}초"
+        print(f"[geryon watch] 자동 싱크 시작 — 소스: {source_label}, 간격: {interval_label} (Ctrl+C 로 종료)")
+
+        _cmd_prefix = _geryon_cmd_prefix()
+        def _build_sync_cmd() -> list[str]:
+            cmd = [*_cmd_prefix, "sync"]
+            if source:
+                cmd += ["--source", source]
+            if getattr(args, "bronze_dir", None):
+                cmd += ["--bronze-dir", args.bronze_dir]
+            if getattr(args, "days", None) is not None:
+                cmd += ["--days", str(args.days)]
+            if getattr(args, "since", None):
+                cmd += ["--since", args.since]
+            if getattr(args, "until", None):
+                cmd += ["--until", args.until]
+            if getattr(args, "all", False):
+                cmd.append("--all")
+            if getattr(args, "since_db", False):
+                cmd.append("--since-db")
+            for sp in (getattr(args, "space", None) or []):
+                cmd += ["--space", sp]
+            if getattr(args, "max_pages", None):
+                cmd += ["--max-pages", str(args.max_pages)]
+            if getattr(args, "attachments", False):
+                cmd.append("--attachments")
+            for repo in (getattr(args, "repo", None) or []):
+                cmd += ["--repo", repo]
+            if getattr(args, "depth", None):
+                cmd += ["--depth", str(args.depth)]
+            if getattr(args, "branch", None):
+                cmd += ["--branch", args.branch]
+            if getattr(args, "project", None):
+                cmd += ["--project", args.project]
+            if getattr(args, "max_issues", None):
+                cmd += ["--max-issues", str(args.max_issues)]
+            if getattr(args, "dry_run", False):
+                cmd.append("--dry-run")
+            if getattr(args, "force", False):
+                cmd.append("--force")
+            if getattr(args, "no_vector", False):
+                cmd.append("--no-vector")
+            if getattr(args, "full", False):
+                cmd.append("--full")
+            if getattr(args, "no_prune", False):
+                cmd.append("--no-prune")
+            return cmd
+
+        _running = True
+
+        def _stop(sig, frame):
+            nonlocal _running
+            _running = False
+            print("\n[geryon watch] 종료 신호 수신 — 현재 싱크 완료 후 종료합니다.", file=sys.stderr)
+
+        signal.signal(signal.SIGINT, _stop)
+        signal.signal(signal.SIGTERM, _stop)
+
+        run_count = 0
+        while _running:
+            run_count += 1
+            ts_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"\n[{ts_start}] 싱크 #{run_count} 시작 (소스: {source_label})")
+            # 서브프로세스로 격리 실행 — 완료 후 OS가 메모리 완전 회수.
+            # start_new_session=True: 자식을 새 세션/프로세스그룹으로 분리 → 터미널 Ctrl+C(SIGINT)가
+            #   자식엔 전달되지 않아, 종료 신호를 받아도 '현재 싱크는 끝까지' 수행(위 _stop 약속과 일치).
+            result = subprocess.run(_build_sync_cmd(), start_new_session=True)
+            if result.returncode != 0:
+                print(f"  [싱크 오류] 종료코드 {result.returncode}", file=sys.stderr)
+
+            if not _running:
+                break
+
+            next_run = datetime.now() + timedelta(seconds=interval)
+            print(f"  다음 싱크: {next_run.strftime('%H:%M:%S')} (약 {interval_label} 후) — Ctrl+C 로 중단")
+
+            # 1초 단위 sleep — 인터럽트 반응성 유지
+            elapsed = 0
+            while _running and elapsed < interval:
+                time.sleep(1)
+                elapsed += 1
+
+        print("[geryon watch] 데몬 종료.")
+
     elif args.command == "ingest":
         print(f"Ingesting source: {args.source}")
         source = args.source or "confluence"

@@ -21,7 +21,8 @@
 
 - **전략 A — 폐쇄망 노드가 직접 색인**: 휠 + 모델을 반입해 `sync`까지 폐쇄망에서 수행.
 - **전략 B — 외부에서 빌드한 DB를 반입(권장·가장 단순)**: 연결망에서 색인을 끝낸 `geryon.db`만
-  폐쇄망으로 옮기면, 폐쇄망 노드는 **검색만** 하므로 임베드 모델조차 필요 없습니다(rerank만).
+  폐쇄망으로 옮기면 폐쇄망 노드는 **색인을 안 하므로** 수집·자격증명이 불필요합니다.
+  (모델은 두 종류 모두 필요 — 질의 시 임베드 모델로 질의 벡터를 만들고 rerank 모델로 재정렬합니다.)
 
 ---
 
@@ -33,7 +34,7 @@
 ```bash
 # 프로젝트 루트에서 — 본체(geryonmcp) + 모든 의존성 휠을 한 디렉터리에 빌드
 python3 -m pip wheel . -w geryon_bundle
-#   → geryon_bundle/ 에 geryonmcp-1.0.0-...whl 포함 ~100여 개 .whl 생성
+#   → geryon_bundle/ 에 geryonmcp-<버전>-...whl 포함 ~100여 개 .whl 생성
 ```
 > `pip download .` 는 **본체 휠을 안 만들므로** 쓰지 마세요. 반드시 `pip wheel .` 사용.
 
@@ -58,7 +59,7 @@ geryon status                                 # documents/chunk_embeddings 확�
 
 **반출물 정리**
 - `geryon_bundle/` (휠)
-- `geryon_models.tgz` (모델 캐시) — 전략 B 검색 전용이면 rerank 모델만 있어도 됨
+- `geryon_models.tgz` (모델 캐시) — 임베드 + rerank **두 모델 모두**(질의 시 둘 다 사용)
 - (전략 B) `geryon.db`
 
 > ⚠️ `geryon.db`는 **사내 위키 본문 전체**를 담습니다. 동일 권한 내부에서만 전달하고 외부 공개 금지.
@@ -130,7 +131,7 @@ geryon status
 | 휠 설치 중 일부 패키지 빌드 실패 | OS/아키텍처/Python 버전 불일치 | 연결망 PC를 폐쇄망과 **동일 환경**으로 맞춰 재빌드 |
 | 검색 시 모델 다운로드 시도/지연 | 모델 캐시 경로 불일치 | `~/.geryon/models` 복원 확인 또는 `GERYON_MODEL_CACHE` 지정, `HF_HUB_OFFLINE=1` |
 | `reranker 로드 실패(하이브리드 폴백)` 로그 | rerank 모델 캐시 누락 | 모델 tgz 재반입(검색은 폴백으로 계속 동작은 함) |
-| 첫 부팅 후 모델 사라짐 | (구버전) /tmp 캐시 | v1.0.0+는 `~/.geryon/models` 영구 통합 — 해당 없음 |
+| 첫 부팅 후 모델 사라짐 | (구버전) /tmp 캐시 | 현재 버전은 `~/.geryon/models` 영구 통합 — 해당 없음 |
 
 ---
 
@@ -140,7 +141,7 @@ geryon status
 
 | 항목 | 결과 |
 |------|------|
-| `pip wheel .` 번들 생성 | geryonmcp-1.0.0 + 의존성 **104개 휠** |
+| `pip wheel .` 번들 생성 | geryonmcp 본체 + 의존성 **~100여 개 휠** |
 | `pip install --no-index --find-links` (PyPI 차단) | 신규 venv 설치 **성공** |
 | 모델 통합 캐시(`~/.geryon/models`) 임베드 로드 | `HF_HUB_OFFLINE=1`, `/tmp` 캐시 제거 상태에서 **dim 384 정상** |
 | 오프라인 설치본 + 오프라인 모델 검색 | `geryon search` **정상 결과(score 1.0)** |

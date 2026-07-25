@@ -36,6 +36,10 @@ build/
 
 # OpenCode 런타임 세션 상태(커밋 제외)
 .omo/
+.omc/
+
+# 로컬 스크래치·원자료(회의록·Confluence 덤프·POC 원본·PII 포함) — 절대 커밋 금지
+.archive/
 
 # rerank 모델 캐시(prefetch 대상, 커밋 금지) / 데이터
 models/

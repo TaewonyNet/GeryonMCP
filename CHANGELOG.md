@@ -5,6 +5,57 @@
 버전은 [유의적 버전(SemVer)](https://semver.org/lang/ko/) `MAJOR.MINOR.PATCH` 를 사용합니다.
 - **MAJOR**: 비호환(breaking) 변경 · **MINOR**: 하위호환 기능 추가 · **PATCH**: 하위호환 버그 수정.
 
+## [Unreleased] — 1.3.0 목표
+
+### 목표: 이중 청크 검색 인덱스 (원본 + 핵심요약본)
+
+회의록·명세서 등 긴 문서의 검색 품질을 높이기 위해 **원본 청크와 LLM 정제 청크를 함께 색인**한다.
+
+**검색 DB에 두 종류의 청크를 저장:**
+- `raw` — 현재 방식의 슬라이딩 윈도우 청크 (원문 그대로)
+- `refined` — LLM이 추출한 의미 단위 청크 (불필요한 내용 제거, 핵심만)
+
+**문서 유형별 정제 방식:**
+- `meeting` — topic 세그먼트만 추출 (잡담·진행 발언 제거), `제목 + 요약 + 근거`를 청크로
+- `spec / wiki` — 섹션별 `요약 + 핵심항목`을 청크로, 수식·테이블은 보존
+
+**검색 흐름:**
+- `raw` + `refined` 풀을 동시에 검색 → cross-encoder rerank로 최종 순위 결정
+- refined 청크가 있는 문서는 의미 검색 정밀도 향상, raw 청크는 정확한 문구 검색 커버
+
+**필요 기술:**
+- `chunks` 테이블 `chunk_type` 컬럼 추가 (`raw` / `refined`)
+- `documents` 테이블 `refined_at` 추가 (정제 처리 여부·시각 추적)
+- `DocumentRefiner` → `IngestionPipeline` 통합 (조건: 500자 이상 + meeting/spec 감지)
+- Ollama 미실행 시 raw만 색인하는 graceful 폴백
+- `detect_type` 확장 — 마크다운 테이블(`|---|`) 포함 문서 `spec`으로 분류 (완료 v1.2.0)
+- `_SPEC_SYSTEM` 프롬프트 — 헤더 없는 문서도 주제 전환 기준으로 섹션 분리, `formula` 타입 추가 (완료 v1.2.0)
+
+### Added
+- **`scripts/team_install_template.py`**: 팀 배포용 원클릭 설치 스크립트 템플릿(PEP 723, 표준 라이브러리만 사용). wheel·공유 DB를 scp 우선/HTTP 폴백으로 받아 `uv tool install` + `geryon setup`(MCP 등록·샘플 검색)까지 자동화. 상수 5개(`GERYON_INSTALL_*`)만 바꾸면 팀마다 재사용. `docs/TEAM_DEPLOY.md` §2에 사용법 추가.
+
+## [1.2.0] - 2026-07-26
+
+문서 정제 레이어(LLM 추출) + 자동 싱크 데몬 + 멀티소스 sync + Confluence 접근 감지 + MCP 클라이언트 상세 가이드.
+
+### Added
+- **`geryon watch` 자동 싱크 데몬**: `sync` 를 주기적으로 반복 실행(기본 10분 간격). SIGINT/SIGTERM 우아한 종료, 1초 단위 sleep으로 인터럽트 반응성 유지. `--interval`, `--no-vector`, `--full`, `--no-prune` 지원. systemd / launchd / Windows 작업 스케줄러 등록 방법은 `docs/MCP_INSTALL.md` §7 참고.
+- **멀티소스 `sync`·`watch`**: `--source` 를 생략하면 confluence+git+jira 를 한 인덱스로 통합 수집. 한 소스가 실패해도 나머지는 계속 진행하고, 실패가 있으면 끝에서 요약과 함께 비정상 종료코드를 낸다.
+- **Confluence 접근 상실 감지** (`check_space_access`): 계정 ID·API 토큰 변경으로 스페이스 접근 권한을 잃으면 sync 가 조용히 0건이 되던 사고를 방지. 설정된 스페이스 중 접근 불가를 감지해 `⚠ 접근 불가 스페이스 N개` 경고를 `sync`/`acquire` 배너로 노출(재시도 없는 프로브·상한으로 점검 비용 최소화). 트러블슈팅은 `docs/USER_MANUAL.md` §7.
+- **문서 정제 레이어** (`src/geryon/analyze/llm_extract.py`): 회의 전사체·기술 스팩 문서를 LLM(Ollama)으로 처리해 의미 단위로 분해. `LLMConfig`(환경변수 오버라이드), `ExtractionMeta`(모델·digest·스키마 버전 추적), `DocumentRefiner`(meeting/spec 자동 감지·추출) 포함.
+- **LLM 변경 추적**: `ExtractionMeta.model_digest` — Ollama `/api/show` 로 모델 파일 hash(앞 12자리)를 기록. 환경변수 `GERYON_LLM_MODEL`, `GERYON_LLM_URL`, `GERYON_LLM_CTX`, `GERYON_LLM_PREDICT`로 qwen2.5·Gemma 등 다른 LLM으로 교체 가능.
+- **단위·통합 테스트** (`tests/test_extract.py`, `tests/test_watch_and_access.py`, `tests/fixtures/synthetic.py`): 실제 개인정보·회사정보 없는 합성 데이터, `@pytest.mark.integration` 마커(Ollama 미실행 시 자동 skip). watch 프리픽스 폴백·스페이스 접근 점검 커버.
+- **`docs/MCP_INSTALL.md`**: Claude Code / Claude Desktop / Cursor / VS Code / Zed 클라이언트별 상세 설치·등록 방법 + `geryon watch` 데몬 연동 방법(systemd·launchd·Windows 스케줄러 예제 포함).
+
+### Changed
+- `docs/INSTALL_WALKTHROUGH.md` §6: `MCP_INSTALL.md` 링크로 요약. 공통 JSON 예시는 유지.
+- 설치·배포 문서(USER_MANUAL·TEAM_DEPLOY·MCP_INSTALL·INSTALL_WALKTHROUGH·AIRGAP): MCP `command: "geryon"` 의 PATH 주의(격리 venv·`uv tool` 시 절대경로), `geryon watch` 자동 싱크 안내, 자격증명 회전 트러블슈팅, `sync`/`--all` 의미 정정, 소스 지원 현황(Confluence·Git·Jira) 반영.
+
+### Fixed
+- **`geryon watch` 데몬 무동작**: `geryon` 이 PATH 에 없는 격리 venv 에서 자식 `sync` 가 `python sync` 로 실행돼 매 주기 실패하던 문제 수정(`_geryon_cmd_prefix` — 현재 스크립트를 인터프리터와 함께 실행).
+- **멀티소스 sync 연쇄 중단**: 한 소스 실패가 나머지 소스 수집을 막던 문제 수정(실패는 집계 후 계속 진행).
+- **watch 우아한 종료**: Ctrl+C 시 진행 중 싱크가 함께 중단되던 문제 — 자식을 새 세션으로 분리(`start_new_session`)해 "현재 싱크 완료 후 종료" 약속대로 동작. `--interval` 하한 클램프.
+
 ## [1.1.0] - 2026-06-20
 
 폐쇄망(air-gap) 지원 강화.
@@ -46,4 +97,6 @@
 - 구성: `src/geryon` 11개 모듈(acquire·connectors·domain·embed·gold·index·mcp·normalize·pipeline·search·store).
 - 공개 전 정리: 문서·코드·테스트의 실제 인명 제거(placeholder), `embed` 패키지 `__init__.py` 보강, `pytest testpaths` 고정.
 
+[1.2.0]: https://github.com/TaewonyNet/GeryonMCP/releases/tag/v1.2.0
+[1.1.0]: https://github.com/TaewonyNet/GeryonMCP/releases/tag/v1.1.0
 [1.0.0]: https://github.com/TaewonyNet/GeryonMCP/releases/tag/v1.0.0

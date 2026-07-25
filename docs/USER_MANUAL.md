@@ -124,6 +124,8 @@ geryon sync --source confluence --all   # 날짜 제한 없이 전체
 ```
 저장 후 클라이언트를 재시작하면 검색 도구가 나타납니다.
 
+> ⚠ `command: "geryon"` 은 `geryon` 이 PATH 에 있을 때만 동작합니다. GUI 클라이언트는 셸 PATH 를 상속하지 않으므로, 격리 venv·`uv tool` 설치라면 `command` 를 **절대경로**(예: `~/.local/bin/geryon`, `/path/.venv/bin/geryon`)로 지정하세요(§7 `command not found` 참고).
+
 ### 5.2 검색 도구
 | 도구 | 용도 | 예시(자연어로 요청하면 클라이언트가 호출) |
 |---|---|---|
@@ -149,17 +151,29 @@ geryon search "배포 절차" -k 5  # 터미널에서 직접 검색(MCP 없이 �
 
 ### 6.2 재색인·갱신
 ```bash
-geryon sync --all          # 최신 변경 반영(증분)
-geryon reindex --full        # 전체 재색인
+geryon sync                       # 최신 변경 반영(증분) — 소스 미지정 시 confluence+git+jira 전부
+geryon sync --source confluence   # 특정 소스만 증분
+geryon sync --all                 # 전체 재수집(증분 아님 — 날짜창 없이 전량 acquire)
+geryon reindex --full             # 전체 재색인
 ```
+> 주의: `--all` 은 **증분이 아니라 전체 재수집**입니다(증분은 플래그 없는 `geryon sync`). 한 소스가 실패해도 나머지 소스는 계속 진행되며, 실패가 있으면 마지막에 요약과 함께 비정상 종료코드를 냅니다.
 
-### 6.3 주요 설정(.env)
-| 변수 | 기본 | 설명 |
-|---|---|---|
-| `GERYON_RERANK_PASSAGE` | 1 | 본문중심 검색 강화(0=제목만·더 빠름) |
-| `GERYON_RERANK_POOL` | 60 | 재정렬 후보 수(낮추면 빠르고 메모리↓) |
-| `GERYON_RERANK_QUANTIZE` | 1 | int8 가속(0=fp32 정확도 우선) |
-| `GERYON_RERANK_MODEL` | bge-reranker-base | 재정렬 모델 |
+### 6.3 자동 싱크 데몬 (`geryon watch`)
+```bash
+geryon watch                       # 기본 10분마다 sync(acquire+ingest) 자동 반복 — 모든 소스
+geryon watch --source confluence --interval 300   # 특정 소스, 5분 간격
+```
+백그라운드 상시 구동(systemd/launchd/작업 스케줄러)은 `docs/MCP_INSTALL.md §7` 참고. 격리 venv 라면 서비스 파일의 실행 경로도 `.venv/bin/geryon` 절대경로로 지정하세요.
+
+### 6.4 주요 설정(.env)
+| 변수 | 기본 | 설명 | 트레이드오프 |
+|---|---|---|---|
+| `GERYON_RERANK_THREADS` | 0(자동) | ONNX rerank 스레드 수 | **속도 최대 레버.** 기본 자동보다 명시 지정이 빠름. `cpu_count/2~3` 권장(예: 8코어 PC → `4`) |
+| `GERYON_RERANK_PASSAGE` | 1 | 본문중심 검색 강화 | 0=제목만·3배 빠름, 본문 recall −34pp. 제목이 잘 정리된 문서라면 0도 무방 |
+| `GERYON_RERANK_POOL` | 60 | 재정렬 후보 수 | 낮추면 빠름·recall↓. pool=20은 3배 빠름, pool=120은 체감 차이 없음 |
+| `GERYON_RERANK_QUANTIZE` | 1 | int8 양자화 | 1=28% 빠름·모델 4배↓·정확도 −6.5%p / 0=fp32 정확도 우선 |
+| `GERYON_RERANK_VEC_POOL` | 0 | 벡터 후보 보강 | 0=끔. 켜면(예: 10) 조사형 recall +2%p, 속도 −28% |
+| `GERYON_RERANK_MODEL` | bge-reranker-base | 재정렬 모델 | — |
 | `GERYON_ATTACH_MAX_MB` | 50 | 첨부 크기 상한(MB). 초과 시 다운로드 skip(메타 fileSize + 응답 Content-Length 양쪽 검사) |
 | `GERYON_ATTACH_SKIP_EXT` | 압축·미디어·실행 | 차단 확장자(콤마). 기본: `zip,7z,rar,tar,gz,…`·`mp4,mov,…`·`mp3,wav,…`·`iso,exe,dmg,…` |
 | `GERYON_DICT_AUTO` | 0(OFF) | 자동 유의어 사전(`dictionary.auto.yaml`) 로드. 기본 OFF — 내 데이터가 동의어 연결에 적합한지 골든으로 확인 후 `1`로 켠다(수동 `dictionary.yaml`은 항상 적용) |
@@ -168,10 +182,11 @@ geryon reindex --full        # 전체 재색인
 ## 7. 트러블슈팅
 | 증상 | 원인 | 해결 |
 |---|---|---|
-| `command not found: geryon` | 설치 경로 미등록 | `uv tool install .` 재실행, 또는 `python -m geryon.cli ...` |
+| `command not found: geryon` (특히 에디터/GUI 에서 MCP 서버 안 뜸) | 설치 경로가 PATH 에 없음. GUI 클라이언트는 셸 PATH 미상속 | `uv tool install .` 재실행, 또는 MCP 설정 `command` 를 절대경로(`~/.local/bin/geryon`·`/path/.venv/bin/geryon`)로. CLI 대체: `python -m geryon.cli ...` |
 | `command not found: uv` | uv 미설치 | §2.1 참고, 또는 `pip install -e .` |
 | bootstrap 오래 걸림 | 최초 모델 다운로드 | 정상(1회). 이후 캐시로 빠름 |
-| 검색 결과 비어 있음 | 색인 전 | `geryon demo` 확인 → 실데이터는 `geryon sync --all` |
+| 검색 결과 비어 있음 | 색인 전 | `geryon demo` 확인 → 실데이터는 `geryon sync` |
+| sync 가 조용히 **0건**(최신처럼 보임)인데 실제론 갱신 안 됨 | 계정 ID 변경·API 토큰 교체로 **스페이스 접근 권한 상실** | sync 로그의 `⚠ 접근 불가 스페이스 N개` 경고 확인 → `.env` 의 `CONFLUENCE_USERNAME`/`CONFLUENCE_API_TOKEN` 을 접근 권한 있는 값으로 갱신 → `geryon init` 재실행(스페이스 목록 조회로 접근 재검증) → `geryon acquire --source confluence --all` 로 전량 재수집 |
 | `Confluence 자격증명을 찾지 못했습니다` | `.env` 미설정 | §4 참고해 `.env` 채우기 |
 | health "원본 데이터 없음" 경고 | 수집 전 | 정상. 색인하면 사라짐 |
 | 메모리 부족 | 16GB 미만 | `GERYON_RERANK_QUANTIZE=1` 유지, `GERYON_RERANK_POOL` 낮추기 |
@@ -179,7 +194,7 @@ geryon reindex --full        # 전체 재색인
 ## 8. 자주 묻는 질문
 - **유료 AI나 인터넷이 필요한가요?** 아니요. 모델 다운로드와 수집 때만 인터넷을 쓰고, 검색은 완전 오프라인·무료입니다.
 - **내 데이터가 외부로 나가나요?** 아니요. 검색·랭킹은 로컬 데이터만 사용합니다.
-- **Confluence 외 다른 소스는?** 현재 Confluence 중심이며, 다른 커넥터는 로드맵입니다.
+- **Confluence 외 다른 소스는?** Confluence·Git·Jira 를 지원합니다(§4.2/§4.3). `geryon sync` 는 세 소스를 한 인덱스로 통합 수집하며, 검색은 통합되고 `sources` 필터로 좁힐 수 있습니다.
 - **설정 파일을 덮어쓰나요?** 아니요. `geryon bootstrap`은 `.env` 가 **없을 때만** 현재 디렉터리에 내장 템플릿으로 생성하고 기존 값은 보존합니다.
 
 ## 9. 제거
