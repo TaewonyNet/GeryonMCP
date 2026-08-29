@@ -61,6 +61,19 @@ RECENCY_BOOST_CEILING = 0.15
 # env GERYON_RELEVANCE_DISTANCE로 조정 가능.
 RELEVANCE_DISTANCE_THRESHOLD = float(os.getenv("GERYON_RELEVANCE_DISTANCE", "0.12"))
 
+# static_score(recency·richness·backlink 사전계산 품질점수)를 랭킹에 반영하는 세기.
+#   최종점수 = base × (1 + STATIC_ALPHA × static_score)
+#
+# 측정 이력(골든 300건, 이 저장소 코퍼스):
+#   alpha  0 / 0.1 / 0.5 / 1 / 3  →  hit 168 / 169 / 170 / 168 / 166
+#   alpha 0 vs 0.5 McNemar: p=0.625 (불일치 1:3) — **유의하지 않음**.
+# 즉 최적값처럼 보이는 0.5 도 우연과 구분되지 않아 기본값을 바꿀 근거가 없다. 0.1 유지.
+# alpha 를 키우면(3 이상) 오히려 나빠지는 경향은 있으므로 무작정 올리지 말 것.
+# 자기 코퍼스에서 다시 재려면:
+#   python scripts/toolkit.py bench <cases> <db> --sweep STATIC_ALPHA=0,0.1,0.5,1,3
+#   python scripts/ab_significance.py <cases> <db> --a STATIC_ALPHA=0.1 --b STATIC_ALPHA=<후보>
+RANKING_STATIC_ALPHA = float(os.getenv("GERYON_STATIC_ALPHA", "0.1"))
+
 # Rerank: 키워드 후보를 cross-encoder로 재정렬.
 # PoC: 키워드(unicode61)+ONNX rerank = ~570ms/74.2%, 벡터 brute-force보다 빠르고 정확.
 # fastembed(ONNX, torch 불필요) 사용. 모델 로드 실패 시 하이브리드로 graceful fallback.

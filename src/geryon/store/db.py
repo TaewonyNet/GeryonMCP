@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from geryon.config import DB_PATH, ensure_directories
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 DDL_STATEMENTS = [
     """
@@ -203,7 +203,39 @@ _V7_DDL = [
 ]
 
 # 신규 DB는 처음부터 포함
-DDL_STATEMENTS = DDL_STATEMENTS + _V4_DDL + _V5_DDL + _V6_DDL + _V7_DDL
+# v8: 검색 행동 로그(질의 → 선택). 오프라인 평가의 근본 한계를 푸는 유일한 신호원.
+#   합성 골든셋은 "문서에서 역생성한 질의"라 실제 사용자 의도 분포와 다르다(covariate shift).
+#   MCP 는 search → get_document 호출이 자연스럽게 "질의 → 선택"이라 암묵적 클릭을 공짜로 얻는다.
+#   전부 로컬 파일에 남고 외부로 나가지 않는다. GERYON_SEARCH_LOG=0 으로 끌 수 있다.
+_V8_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS search_log (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts           TEXT NOT NULL,          -- ISO8601 UTC
+        session_id   TEXT,                   -- 프로세스 단위 세션(질의→선택 연결용)
+        query        TEXT NOT NULL,
+        k            INTEGER,
+        n_results    INTEGER,
+        top_doc_ids  TEXT,                   -- JSON 배열(상위 N개) — 선택 랭크 계산용
+        latency_ms   REAL
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_search_log_ts ON search_log(ts);",
+    """
+    CREATE TABLE IF NOT EXISTS selection_log (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts           TEXT NOT NULL,
+        session_id   TEXT,
+        doc_id       TEXT NOT NULL,
+        search_id    INTEGER,                -- 직전 search_log.id (있으면)
+        rank         INTEGER,                -- 그 검색 결과에서의 순위(1-base, 없으면 NULL)
+        FOREIGN KEY (search_id) REFERENCES search_log(id)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_selection_log_doc ON selection_log(doc_id);",
+]
+
+DDL_STATEMENTS = DDL_STATEMENTS + _V4_DDL + _V5_DDL + _V6_DDL + _V7_DDL + _V8_DDL
 
 # 버전별 증분 마이그레이션 (idempotent — 모든 문은 IF NOT EXISTS)
 MIGRATIONS: dict[int, list[str]] = {
@@ -211,6 +243,7 @@ MIGRATIONS: dict[int, list[str]] = {
     5: _V5_DDL,
     6: _V6_DDL,
     7: _V7_DDL,
+    8: _V8_DDL,
 }
 
 

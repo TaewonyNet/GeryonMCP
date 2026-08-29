@@ -13,6 +13,7 @@ import math
 from geryon.config import (
     RECENCY_HALF_LIFE_DAYS, RECENCY_BOOST_CEILING, RELEVANCE_DISTANCE_THRESHOLD,
     RERANK_ENABLED, RERANK_POOL, RERANK_VEC_POOL, RERANK_PASSAGE,
+    RANKING_STATIC_ALPHA,
 )
 from geryon.search.rerank import rerank_scores
 
@@ -155,9 +156,9 @@ class HybridRetriever(Retriever):
         for rank, doc_id in enumerate(filtered_vector_doc_ids, start=1):
             rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + (1.0 / (constant_k + rank))
 
-        # static_score를 RRF에 경량 가중으로 반영
+        # static_score를 RRF에 가중 반영. 세기는 GERYON_STATIC_ALPHA 로 조정(기본 0.1).
         # static_score를 DB에서 배치 조회 (N+1 방지: 한 쿼리로 처리)
-        STATIC_ALPHA = 0.1  # 경량 가중 (검색 속도 유지)
+        STATIC_ALPHA = RANKING_STATIC_ALPHA
         conn = self.repository.get_connection()
         candidate_ids = list(rrf_scores.keys())
         if candidate_ids:
@@ -238,6 +239,24 @@ class HybridRetriever(Retriever):
         hits_list.facets = facets
         return hits_list
 
+    def _fetch_static_scores(self, doc_ids: list[str]) -> dict[str, float]:
+        """doc_id → static_score 배치 조회(N+1 방지). federation 은 전 DB 를 훑어 병합."""
+        if not doc_ids:
+            return {}
+        out: dict[str, float] = {}
+        placeholders = ",".join("?" * len(doc_ids))
+        for repo in self.repositories:
+            try:
+                rows = repo.get_connection().execute(
+                    f"SELECT doc_id, static_score FROM documents WHERE doc_id IN ({placeholders})",
+                    doc_ids,
+                ).fetchall()
+                for did, ss in rows:
+                    out[did] = float(ss or 0.0)
+            except Exception:
+                continue  # 한 DB 조회 실패가 검색 전체를 막지 않도록
+        return out
+
     def _rerank_search(
         self,
         query: str,
@@ -303,6 +322,22 @@ class HybridRetriever(Retriever):
             if scores is None:
                 return None  # reranker 미사용 → 하이브리드 폴백
 
+        # 로짓 → [0,1] 정규화를 **정렬 전에** 수행한다. 이후 static_score 부스트는 곱셈이라
+        # 로짓(음수 가능) 위에서 곱하면 부호가 뒤집혀 순위가 깨지기 때문.
+        scores = [1.0 / (1.0 + math.exp(-s)) for s in scores]
+
+        # static_score(recency·richness·backlink 사전계산 품질점수)를 rerank 순위에 반영.
+        # 기존에는 이 경로에 static_score 가 아예 없어, rerank 가 켜진 기본 설정에서는
+        # 계산해 둔 static_score 가 랭킹에 전혀 쓰이지 않았다(골든 300건 alpha 0~5 무변화로 확인).
+        # alpha=0 이면 이 블록은 무효(순수 rerank 순위).
+        if RANKING_STATIC_ALPHA > 0:
+            ss_map = self._fetch_static_scores([h.doc_id for h in kw_hits])
+            if ss_map:
+                scores = [
+                    s * (1.0 + RANKING_STATIC_ALPHA * ss_map.get(h.doc_id, 0.0))
+                    for h, s in zip(kw_hits, scores)
+                ]
+
         order = sorted(range(len(kw_hits)), key=lambda i: scores[i], reverse=True)
         ranked = [(kw_hits[i], scores[i]) for i in order]
 
@@ -311,7 +346,7 @@ class HybridRetriever(Retriever):
         }
         hits: list[SearchHit] = []
         for hit, raw in ranked[offset:offset + k]:
-            hit.score = 1.0 / (1.0 + math.exp(-raw))  # 로짓 → [0,1] 정규화
+            hit.score = min(1.0, raw)  # 위에서 이미 [0,1] 정규화(+부스트) 완료 — 상한만 클램프
             facets["sources"][hit.source.value] = facets["sources"].get(hit.source.value, 0) + 1
             if hit.space_or_repo:
                 facets["spaces_or_repos"][hit.space_or_repo] = facets["spaces_or_repos"].get(hit.space_or_repo, 0) + 1

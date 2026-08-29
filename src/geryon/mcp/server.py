@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 from mcp.server.fastmcp import FastMCP
+from geryon.store import search_log as _search_log
 
 from geryon.config import DB_PATHS
 from geryon.store.repository import SqliteRepository, MultiRepository
@@ -78,10 +79,18 @@ def create_mcp_server(db_path: str | Path | None = None) -> FastMCP:
     ) -> str:
         """Execute semantic personalized/hybrid search using gold_search.search."""
         # 검색·직렬화는 공유 서비스(geryon.search.query)로 — CLI `geryon search` 와 동일 경로.
+        import time as _time
+        _t0 = _time.perf_counter()
         response_data = run_search(
             gold_search, query, k=k, offset=offset, user_id=user_id,
             sources=sources, spaces=spaces, tags=tags, categories=categories,
             authors=authors, date_from=date_from, date_to=date_to,
+        )
+        # 행동 로그(로컬 전용, GERYON_SEARCH_LOG=0 으로 비활성). 실패해도 검색에 영향 없음.
+        _search_log.log_search(
+            repository.get_connection(), query, k,
+            [h.get("doc_id", "") for h in response_data.get("hits", [])],
+            (_time.perf_counter() - _t0) * 1000,
         )
         return json.dumps(response_data, ensure_ascii=False)
 
@@ -137,6 +146,8 @@ def create_mcp_server(db_path: str | Path | None = None) -> FastMCP:
         doc = repository.get(doc_id)
         if doc is None:
             raise ValueError("not_found: Document not found")
+        # 문서 열람 = 암묵적 클릭. 직전 검색과 묶여 선택 랭크가 기록된다.
+        _search_log.log_selection(repository.get_connection(), doc_id)
 
         # 출력 압축(옵트인): body_markdown만 규칙 기반 압축(무손실 기본)
         if compress or max_tokens is not None:

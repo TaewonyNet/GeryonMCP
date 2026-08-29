@@ -146,6 +146,26 @@ python scripts/golden_llm.py <db> --out golden_llm.draft.yml -n 20 --per-doc 2 [
 설정 비교 결론은 **룰기반·LLM 양쪽에서 일치할 때만** 채택한다 —
 자세한 절차·판정 규칙은 `docs/BENCHMARK_METHODOLOGY.md` 기법 3.
 
+### analyze_logs.py — 실사용 행동 로그 분석 (오프라인 평가의 한계를 푸는 축)
+```bash
+python scripts/analyze_logs.py <db> [--export-golden real_golden.yml] [--min-count 2]
+```
+스키마 v8 의 `search_log`(질의) · `selection_log`(선택 문서 + **선택 랭크**)를 읽어:
+
+| 지표 | 뜻 |
+|---|---|
+| **MRR** | 사용자가 1위를 고르는가(1.0) 5위까지 내려가는가. 합성 hit-rate 보다 실제 만족도에 가까움 |
+| 선택 랭크 분포 | 랭킹이 상위에 정답을 올리고 있는지 |
+| **무선택(abandonment)** | 검색만 하고 아무것도 안 연 질의 = 랭킹 실패 후보이자 "어려운 질의" |
+| `--export-golden` | **실사용 (질의→선택) 쌍**을 골든셋으로 내보냄 — 합성이 아닌 진짜 정답 |
+
+로깅은 기본 ON, `GERYON_SEARCH_LOG=0` 으로 끈다. **전부 로컬 SQLite 에만 쌓이고 외부로
+나가지 않는다.** 다만 질의문에 개인정보가 섞일 수 있으므로 **공유용 DB 를 만들기 전에는
+`search_log.purge_logs()` 로 지울 것**.
+
+> ⚠ 선택=정답 가정에는 **위치 편향**이 있다(상위 노출된 것을 고르기 쉬움). 현 랭킹이 만든
+> 편향이 섞이므로 합성 골든셋과 **병행**해서 본다.
+
 ### vector_quant_compare.py — 양자화 손실
 ```bash
 python scripts/vector_quant_compare.py <db> --mode int8|binary

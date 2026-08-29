@@ -7,6 +7,29 @@
 
 ## [Unreleased] — 1.3.0 목표
 
+### Fixed — static_score 가 랭킹에 반영되지 않던 문제 (동작 변경)
+`quality_signals.py` 가 문서마다 계산해 저장하던 `static_score`
+(recency·richness(길이)·backlink_centrality)가 **rerank 경로에 연결돼 있지 않아**,
+rerank 가 켜진 기본 설정에서는 랭킹에 **전혀 쓰이지 않았다**(35,829건 전부 사장).
+- 확인 방법: 골든 300건에서 `GERYON_STATIC_ALPHA` 를 0→5(50배)로 바꿔도 결과가 완전히
+  동일했고 McNemar 분할표의 불일치 쌍이 0 이었다 — 파라미터가 무효라는 결정적 증거.
+- 수정: `_rerank_search` 에 static_score 부스트 연결(federation 대응 `_fetch_static_scores`).
+  함께 로짓→[0,1] 정규화를 정렬 **전**으로 이동(로짓은 음수가 가능해 곱셈 부스트 시
+  부호가 뒤집혀 순위가 깨짐)하고 하류의 이중 정규화를 제거.
+- 하드코딩 `STATIC_ALPHA=0.1` → `GERYON_STATIC_ALPHA` 환경변수로 노출.
+- 기본값은 **0.1 유지**: alpha 0/0.1/0.5/1/3 = hit 168/169/170/168/166 이지만
+  0 vs 0.5 McNemar p=0.625 로 **유의하지 않아** 변경 근거가 없다.
+
+### Added — 검색 행동 로그 (스키마 v8)
+오프라인 평가의 근본 한계(합성 골든셋 ≠ 실사용 질의 분포)를 푸는 신호원.
+- `search_log`(질의·k·결과수·지연) / `selection_log`(선택 문서·**선택 랭크**) 테이블 추가.
+  MCP 의 `search` → `get_document` 호출이 자연스럽게 "질의 → 선택"이라 암묵적 클릭을 얻는다.
+- **로컬 전용**(외부 전송 없음) · **비침습**(로깅 실패가 검색을 막지 않음) ·
+  `GERYON_SEARCH_LOG=0` 으로 비활성 · 공유 DB 배포 전 `purge_logs()` 로 삭제 가능.
+- **`scripts/analyze_logs.py`**: MRR·선택 랭크 분포·무선택(abandonment) 분석과
+  **실사용 (질의→선택) 골든셋 export**(`--export-golden`). 선택=정답 가정의 위치 편향은 명시.
+
+
 ### Added — 셋업·튜닝 도구 (측정 기반 설정)
 
 설정값을 감이 아니라 **측정·통계**로 정하기 위한 도구 모음. 전체 설명은 `docs/SETUP_TOOLING.md`,
