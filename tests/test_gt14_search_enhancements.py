@@ -145,13 +145,16 @@ def test_gt14_get_related(temp_db):
     vstore = VectorStore(db_path=temp_db)
     pipeline = IngestionPipeline(repository=repo, vector_store=vstore)
 
+    # get_related 는 벡터 유사도가 아니라 **문서 트리(계층) 형제/부모 + 링크** 기반(임베딩 불필요).
+    # 두 문서를 같은 부모(["DEMO","할인정책"]) 아래 형제로 두면 서로 연관 문서가 되어야 한다.
     doc1 = RawRecord(
         source=SourceType.CONFLUENCE,
         source_id="page_1",
         raw_body="<h1>최대 할인율 개발 정책</h1><p>할인율 제한 규칙 준수.</p>",
         raw_format="html",
         title="최대 할인율 개발 정책",
-        space_or_repo="DEMO"
+        space_or_repo="DEMO",
+        metadata={"hierarchy": ["DEMO", "할인정책", "최대할인율"]},
     )
     doc2 = RawRecord(
         source=SourceType.CONFLUENCE,
@@ -159,18 +162,27 @@ def test_gt14_get_related(temp_db):
         raw_body="<h1>할인율 예외 규정</h1><p>할인율 최댓값 예외 기준 정의.</p>",
         raw_format="html",
         title="할인율 예외 규정",
-        space_or_repo="TE"
+        space_or_repo="DEMO",
+        metadata={"hierarchy": ["DEMO", "할인정책", "예외규정"]},
     )
 
     pipeline.run(MockConnector([doc1, doc2]))
 
     retriever = HybridRetriever(repository=repo, vector_store=vstore)
-    
-    # get_related for doc1
-    related = retriever.get_related("6c2e6f14b1925466401f6578a8de5e14e3ad34cd", k=5)
+
+    # doc_id 는 내용+계층 해시라 고정값을 못 쓴다 — source_id 로 조회.
+    conn = repo.get_connection()
+    doc1_id = conn.execute(
+        "SELECT doc_id FROM documents WHERE source = ? AND source_id = ?",
+        (SourceType.CONFLUENCE.value, "page_1"),
+    ).fetchone()[0]
+
+    related = retriever.get_related(doc1_id, k=5)
     assert len(related) > 0
-    # Query document itself must not be returned
-    assert not any(h.doc_id == "6c2e6f14b1925466401f6578a8de5e14e3ad34cd" for h in related)
+    # 같은 부모 아래 형제(doc2)가 연관 문서로 잡혀야 한다.
+    assert any(h.title == "할인율 예외 규정" for h in related)
+    # 질의 문서 자신은 결과에 포함되면 안 된다.
+    assert not any(h.doc_id == doc1_id for h in related)
 
 def test_gt14_mcp_resources_and_prompts(temp_db):
     repo = SqliteRepository(temp_db)

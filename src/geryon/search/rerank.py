@@ -67,7 +67,7 @@ def _quantized_encoder():
             sources=ModelSource(hf=RERANK_MODEL),
             model_file="onnx/model_int8.onnx",
             description="int8 dynamic quantized (opt-in)",
-            license="cc-by-nc-4.0",
+            license="mit",   # bge-reranker-base 원본 라이선스(MIT) 상속 — 상업 이용 가능
             size_in_gb=0.28,
         )
     return _encoder(int8_name)

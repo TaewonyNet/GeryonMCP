@@ -326,73 +326,57 @@ class HybridRetriever(Retriever):
         if not doc:
             raise ValueError(f"not_found: Document with ID {doc_id} not found.")
 
-        conn = self.repository.get_connection()
-        cursor = conn.cursor()
-        _ = cursor.execute("SELECT text FROM chunks WHERE doc_id = ? ORDER BY ordinal LIMIT 1;", (doc_id,))
-        row = cursor.fetchone()
-        chunk_text = cast(str, row[0]) if row else doc.title + " " + doc.body_markdown
-
-        query_vector = self.embedder.embed_query(chunk_text)
-        raw_vector_hits = self.vector_store.search_vector(query_vector, k=(k + 1) * 4)
-
-        seen_docs: set[str] = set()
-        vector_hits: list[dict[str, object]] = []
-        for chunk in raw_vector_hits:
-            d_id = cast(str, chunk["doc_id"])
-            if d_id != doc_id and d_id not in seen_docs:
-                seen_docs.add(d_id)
-                vector_hits.append(chunk)
-
+        import json as _json
         hits: list[SearchHit] = []
-        for hit in vector_hits:
-            d_id = cast(str, hit["doc_id"])
-            score = cast(float, hit["score"])
-            distance = 1.0 - score
-            if distance > self.relevance_threshold:
-                continue
+        seen_ids: set[str] = {doc_id}
 
-            matched_doc = self.repository.get(d_id)
-            if not matched_doc:
-                continue
+        # 1. hierarchy 트리 탐색 — 형제(0.9) > 부모(0.7)
+        #    벡터 대신 문서 트리 구조로 관련 문서를 찾는다. 즉시 동작, LLM/임베딩 불필요.
+        hierarchy = doc.hierarchy or []
+        if len(hierarchy) >= 2:
+            conn = self.repository.get_connection()
+            rows = conn.execute(
+                "SELECT doc_id, title, url, source, space_or_repo, hierarchy, body_markdown "
+                "FROM documents WHERE source = ? AND doc_id != ?",
+                (doc.source, doc_id),
+            ).fetchall()
 
-            snippet = highlight_snippet(cast(str, hit["text"]), doc.title)
-            hits.append(
-                SearchHit(
-                    doc_id=matched_doc.doc_id,
-                    title=matched_doc.title,
-                    url=matched_doc.url,
-                    source=matched_doc.source,
-                    space_or_repo=matched_doc.space_or_repo,
-                    snippet=snippet,
-                    score=score
-                )
-            )
+            parent_path = hierarchy[:-1]
+            siblings, parents = [], []
+            for row in rows:
+                h = _json.loads(row[5] or "[]")
+                if h[:-1] == parent_path and len(h) == len(hierarchy):
+                    siblings.append(row)
+                elif h == parent_path:
+                    parents.append(row)
 
-        hits.sort(key=lambda h: h.score, reverse=True)
+            for row, score in [(r, 0.9) for r in siblings] + [(r, 0.7) for r in parents]:
+                if row[0] in seen_ids or len(hits) >= k:
+                    break
+                seen_ids.add(row[0])
+                hits.append(SearchHit(
+                    doc_id=row[0], title=row[1], url=row[2],
+                    source=row[3], space_or_repo=row[4],
+                    snippet=highlight_snippet(row[6] or "", doc.title),
+                    score=score,
+                ))
 
-        # page_links(1-hop) 형제로 결과 보강 (벡터 미포함 관련 문서 추가)
+        # 2. page_links 1-hop 보강 (Confluence 링크 기반 연결 문서)
         link_doc_ids = self.repository.get_related_by_links(doc.source_id, k=k)
-        seen_hit_ids = {h.doc_id for h in hits}
         for linked_id in link_doc_ids:
-            if linked_id in seen_hit_ids or linked_id == doc_id:
+            if linked_id in seen_ids or len(hits) >= k:
                 continue
             linked_doc = self.repository.get(linked_id)
             if not linked_doc:
                 continue
-            # link-based 관련 문서는 낮은 기본 점수로 추가 (0.5)
-            snippet = highlight_snippet(linked_doc.body_markdown, doc.title)
-            hits.append(
-                SearchHit(
-                    doc_id=linked_doc.doc_id,
-                    title=linked_doc.title,
-                    url=linked_doc.url,
-                    source=linked_doc.source,
-                    space_or_repo=linked_doc.space_or_repo,
-                    snippet=snippet,
-                    score=0.5
-                )
-            )
-            seen_hit_ids.add(linked_id)
+            seen_ids.add(linked_id)
+            hits.append(SearchHit(
+                doc_id=linked_doc.doc_id, title=linked_doc.title,
+                url=linked_doc.url, source=linked_doc.source,
+                space_or_repo=linked_doc.space_or_repo,
+                snippet=highlight_snippet(linked_doc.body_markdown, doc.title),
+                score=0.5,
+            ))
 
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits[:k]

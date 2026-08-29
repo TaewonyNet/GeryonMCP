@@ -20,17 +20,34 @@ classifiers = [
     "Intended Audience :: Developers",
 ]
 dependencies = [
-    "mcp>=1.0.0",
-    "fastmcp>=0.4.1",
+    # MCP 서버 (FastMCP 는 mcp 패키지의 mcp.server.fastmcp — 별도 fastmcp 패키지 아님).
+    # ⚠ 상한 고정 필수: mcp 2.x 에서 FastMCP → MCPServer 로 이름이 바뀌어(breaking)
+    #   `mcp.server.fastmcp` 임포트가 실패한다. 2.x 대응은 별도 마이그레이션 작업.
+    "mcp>=1.0.0,<2",
     "pydantic>=2.0.0",
+    "typing-extensions>=4.5.0",
+    # 수집·정규화
     "beautifulsoup4>=4.12.0",
     "markdownify>=0.11.0",
+    "httpx>=0.24.0",
+    # 검색 코어 (임베딩·벡터·키워드)
     "fastembed>=0.2.0",
     "sqlite-vec>=0.1.0",
+    "numpy>=1.24.0",
     "pyyaml>=6.0.0",
-    "onnx>=1.15.0",  # rerank int8 동적 양자화(GERYON_RERANK_QUANTIZE, 기본 ON)
-    "sympy>=1.12",   # onnxruntime int8 양자화의 symbolic shape inference 필요(없으면 fp32 폴백)
+    # rerank int8 동적 양자화(GERYON_RERANK_QUANTIZE, 기본 ON).
+    # onnx/sympy 는 코드가 직접 import 하지 않지만 onnxruntime 의 양자화 경로가
+    # symbolic shape inference 에 사용한다(없으면 fp32 로 graceful fallback).
+    "onnxruntime>=1.16.0",
+    "onnx>=1.15.0",
+    "sympy>=1.12",
 ]
+
+[project.optional-dependencies]
+# 문서 정제 레이어(src/geryon/analyze) — LLM 추출은 외부 Ollama 를 HTTP 로 호출하므로
+# 무거운 로컬 추론 스택(torch/transformers)을 끌어오지 않는다. 필요한 것은 core 에 이미 있음.
+# 향후 로컬 요약·압축 모델을 도입한다면 여기(analyze extra)에만 추가하고 core 는 경량 유지할 것.
+analyze = []
 
 [project.urls]
 Homepage = "https://github.com/TaewonyNet/GeryonMCP"
@@ -53,6 +70,9 @@ line-length = 120
 # 테스트는 tests/ 에만 있다. 루트 전체 수집 시 gitignore된 데이터/심링크
 # (예: confluence_db → 외부 Bronze)를 따라 들어가 수집이 깨지므로 범위를 고정한다.
 testpaths = ["tests"]
+markers = [
+    "integration: 실제 Ollama LLM이 필요한 통합 테스트 (rye run pytest -m integration)",
+]
 
 [tool.mypy]
 mypy_path = "src"
@@ -65,6 +85,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/geryon"]
+
+[tool.rye]
+dev-dependencies = [
+    "pytest>=9.1.1",
+]
 
 [dependency-groups]
 dev = [

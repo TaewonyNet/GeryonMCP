@@ -7,9 +7,18 @@
 
 ## 1. 요구사항
 - **Python 3.10 이상**
-- **메모리 16GB 이내** 권장 (CPU 전용, GPU 불필요)
-- 디스크 여유 ~2GB (모델·인덱스)
+- **메모리**: 권장 **4.5GB 이상** / 최소 **1.4GB**(저메모리 구성, 아래 참고) — CPU 전용, GPU 불필요
+- **CPU**: **8코어 권장**(그 이상은 이득 없음 — 전 코어 사용은 오히려 느려짐)
+- 디스크 여유: 모델 ~1GB + 인덱스(문서 3.5만 건 기준 ~1.7GB)
 - 인터넷은 **최초 설치(모델 다운로드)와 데이터 수집 때만** 필요. 검색은 완전 오프라인.
+
+> 위 수치는 35,768문서/143,800벡터 환경 실측 기준이다.
+> **내 환경의 권장값은 직접 산출할 수 있다:**
+> ```bash
+> python scripts/autotune.py analyze     # 하드웨어·코퍼스 분석 → 권장 설정
+> ```
+> RAM이 4.5GB에 못 미치면 `GERYON_RERANK=0`(저메모리 구성)으로 1.4GB까지 낮출 수 있으나
+> 검색 지연이 ~0.4초에서 ~3초대로 늘어난다. 자세한 내용은 `docs/SETUP_TOOLING.md`.
 
 ## 2. 설치
 
@@ -171,7 +180,7 @@ geryon watch --source confluence --interval 300   # 특정 소스, 5분 간격
 | `GERYON_RERANK_THREADS` | 0(자동) | ONNX rerank 스레드 수 | **속도 최대 레버.** 기본 자동보다 명시 지정이 빠름. `cpu_count/2~3` 권장(예: 8코어 PC → `4`) |
 | `GERYON_RERANK_PASSAGE` | 1 | 본문중심 검색 강화 | 0=제목만·3배 빠름, 본문 recall −34pp. 제목이 잘 정리된 문서라면 0도 무방 |
 | `GERYON_RERANK_POOL` | 60 | 재정렬 후보 수 | 낮추면 빠름·recall↓. pool=20은 3배 빠름, pool=120은 체감 차이 없음 |
-| `GERYON_RERANK_QUANTIZE` | 1 | int8 양자화 | 1=28% 빠름·모델 4배↓·정확도 −6.5%p / 0=fp32 정확도 우선 |
+| `GERYON_RERANK_QUANTIZE` | 1 | int8 양자화 | **1 권장.** 실측상 fp32(0)가 오히려 느리고(~1,650ms vs ~900ms) 메모리도 더 씀. 골든 정확도는 동일 |
 | `GERYON_RERANK_VEC_POOL` | 0 | 벡터 후보 보강 | 0=끔. 켜면(예: 10) 조사형 recall +2%p, 속도 −28% |
 | `GERYON_RERANK_MODEL` | bge-reranker-base | 재정렬 모델 | — |
 | `GERYON_ATTACH_MAX_MB` | 50 | 첨부 크기 상한(MB). 초과 시 다운로드 skip(메타 fileSize + 응답 Content-Length 양쪽 검사) |
@@ -189,7 +198,8 @@ geryon watch --source confluence --interval 300   # 특정 소스, 5분 간격
 | sync 가 조용히 **0건**(최신처럼 보임)인데 실제론 갱신 안 됨 | 계정 ID 변경·API 토큰 교체로 **스페이스 접근 권한 상실** | sync 로그의 `⚠ 접근 불가 스페이스 N개` 경고 확인 → `.env` 의 `CONFLUENCE_USERNAME`/`CONFLUENCE_API_TOKEN` 을 접근 권한 있는 값으로 갱신 → `geryon init` 재실행(스페이스 목록 조회로 접근 재검증) → `geryon acquire --source confluence --all` 로 전량 재수집 |
 | `Confluence 자격증명을 찾지 못했습니다` | `.env` 미설정 | §4 참고해 `.env` 채우기 |
 | health "원본 데이터 없음" 경고 | 수집 전 | 정상. 색인하면 사라짐 |
-| 메모리 부족 | 16GB 미만 | `GERYON_RERANK_QUANTIZE=1` 유지, `GERYON_RERANK_POOL` 낮추기 |
+| 메모리 부족 | RAM 4.5GB 미만 | `GERYON_RERANK_QUANTIZE=1` 유지(fp32가 오히려 더 씀). 그래도 부족하면 `GERYON_RERANK=0`(피크 909MB, 대신 지연 3~5배). `python scripts/autotune.py analyze` 로 권장값 확인 |
+| 검색이 느림 | 스레드 미지정(자동) | `GERYON_RERANK_THREADS=8`(= min(8, cpu_count)) 명시 지정 + `GERYON_RERANK_POOL=20`. 실측상 속도·정확도 모두 개선 |
 
 ## 8. 자주 묻는 질문
 - **유료 AI나 인터넷이 필요한가요?** 아니요. 모델 다운로드와 수집 때만 인터넷을 쓰고, 검색은 완전 오프라인·무료입니다.

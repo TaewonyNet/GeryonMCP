@@ -16,3 +16,55 @@ os.environ.setdefault("GERYON_RERANK", "0")
 # 벡터 후보 합류도 테스트에선 OFF(임베더 로드·지연 방지). 효과는 별도 측정 스크립트로.
 os.environ.setdefault("GERYON_RERANK_VEC_POOL", "0")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
+
+# ── 문서 정제 통합 테스트 결과 리포트 ─────────────────────────
+_extract_results: list[dict] = []
+
+
+def pytest_runtest_logreport(report):
+    if report.when != "call":
+        return
+    if "TestMeetingIntegration" not in str(report.nodeid) and \
+       "TestSpecIntegration"    not in str(report.nodeid):
+        return
+    _extract_results.append({
+        "nodeid":  report.nodeid,
+        "passed":  report.passed,
+        "failed":  report.failed,
+        "skipped": report.skipped,
+        "duration": getattr(report, "duration", 0.0),
+    })
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    if not _extract_results:
+        return
+
+    tw = terminalreporter
+    tw.write_sep("=", "문서 정제(LLM) 통합 테스트 결과", bold=True)
+
+    # 사용 모델
+    model = os.environ.get("GERYON_LLM_MODEL", "qwen3.5:latest (기본값)")
+    tw.write_line(f"  모델  : {model}")
+    try:
+        from geryon.analyze.llm_extract import SCHEMA_VERSION
+        tw.write_line(f"  스키마: v{SCHEMA_VERSION}")
+    except Exception:
+        pass
+
+    passed  = sum(1 for r in _extract_results if r["passed"])
+    failed  = sum(1 for r in _extract_results if r["failed"])
+    skipped = sum(1 for r in _extract_results if r["skipped"])
+    total   = len(_extract_results)
+
+    tw.write_line("")
+    for r in _extract_results:
+        icon = "✅" if r["passed"] else ("⏭" if r["skipped"] else "❌")
+        name = r["nodeid"].split("::")[-1]
+        dur  = f"{r['duration']:.1f}s" if r["duration"] else ""
+        tw.write_line(f"  {icon} {name}  {dur}")
+
+    tw.write_line("")
+    tw.write_line(f"  결과: {passed}/{total} 통과  실패 {failed}  건너뜀 {skipped}")
+    tw.write_sep("-", "")

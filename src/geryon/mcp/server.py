@@ -19,7 +19,16 @@ def create_mcp_server(db_path: str | Path | None = None) -> FastMCP:
     db_path 미지정 시 `GERYON_DB`(콤마면 여러 DB). 여러 DB면 federation[25]:
     검색은 각 DB 후보를 모아 통합 rerank, doc 조회는 MultiRepository 가 순회.
     """
-    app = FastMCP("GeryonMCP")
+    app = FastMCP(
+        "GeryonMCP",
+        instructions=(
+            "Local integrated document search server. In search(), `sources` accepts "
+            '"confluence" (wiki), "git" (GitHub/GitLab/Bitbucket code and commits), or '
+            '"jira" (issues). To narrow to a specific space or repository, use `spaces` '
+            '(e.g. "AIRDM" for a Confluence space, "org/repo-name" for a Git repository). '
+            "If unsure which values actually exist, call list_sources() first."
+        ),
+    )
     # serverInfo.version 을 앱 버전으로 보고(미설정 시 mcp SDK 버전으로 폴백됨).
     # FastMCP 내부 구조 변화에 대비해 방어적으로 시도.
     try:

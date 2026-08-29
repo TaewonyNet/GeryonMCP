@@ -7,6 +7,56 @@
 
 ## [Unreleased] — 1.3.0 목표
 
+### Added — 셋업·튜닝 도구 (측정 기반 설정)
+
+설정값을 감이 아니라 **측정·통계**로 정하기 위한 도구 모음. 전체 설명은 `docs/SETUP_TOOLING.md`,
+통계 판정 절차는 `docs/BENCHMARK_METHODOLOGY.md`.
+
+- **`scripts/autotune.py`** — 셋업 4단계: `analyze`(하드웨어·코퍼스 → 권장 설정 즉답) ·
+  `apply`(.env 스니펫) · `measure`(실측 기준선 고정) · `verify`(수집 후 회귀 판정, 종료코드로 합격/불합격).
+  `verify` 는 절대값이 아니라 **코퍼스 성장 배수** 대비로 비교한다.
+- **`scripts/profile_resources.py`** — 설정별 피크 RSS·p50/p95·스레드 확장성 실측.
+  설정 조합마다 독립 프로세스로 실행(`GERYON_*` 는 config import 시점에만 읽히므로).
+- **`scripts/toolkit.py`** — 흩어진 스크립트의 단일 진입점(`dict`/`term`/`quant`/`golden`/`bench`).
+  `bench` 는 `GERYON_*` 스윕으로 설정별 골든 hit-rate·소요시간 비교표를 낸다.
+- **`scripts/ab_significance.py`** — 설정 A/B 차이가 우연인지 **McNemar 정확검정**(scipy 불필요).
+- **`scripts/calibrate_conflict.py`** — 정의-충돌 임계값을 사람 라벨 없이 보정.
+  정답셋을 DDL 구조에서 유도(같은 테이블·같은 컬럼=동일 개념 / 같은 테이블·다른 컬럼=다른 개념).
+- **`scripts/term_bootstrap.py`** — Term Contract(용어 정의) 초안 추출. 충돌은 자동 확정하지 않고 표시.
+- **`scripts/vector_quant_compare.py`** — fp32 vs int8/binary 벡터 양자화 손실(recall@k) 비교.
+- **`scripts/golden_llm.py`** — LLM(로컬 Ollama) 기반 **자연어 골든셋 생성**.
+  룰기반(`golden_bootstrap.py`)이 만드는 키워드 나열 질의의 스타일 편향을 보완한다.
+  생성물은 **앵커 검증(할루시네이션 차단)·자기참조 금지·중복 제거**를 통과한 것만 수록하며,
+  `_self_check`(현 검색기 적중 여부)는 표기만 하고 탈락 기준으로 쓰지 않는다
+  (버리면 "이미 맞히는 문제"만 남아 골든셋이 개선 측정 능력을 잃음).
+  설정 비교 결론은 **룰기반·LLM 양쪽에서 일치할 때만** 채택 — 판정 절차는 방법론 문서 기법 3.
+- `scripts/golden_eval.py` — `--json-out` 추가(케이스별 결과 JSON, McNemar 입력용).
+- `scripts/toolkit.py` — `golden-llm` 서브커맨드로 통합.
+
+### Fixed — 패키징(OSS 공개 전 정리)
+- **신규 설치가 깨지던 문제**: `mcp>=1.0.0` 에 상한이 없어 새로 설치하면 mcp 2.x 를 받고,
+  2.x 에서 `FastMCP`→`MCPServer` 로 개명되어 `mcp.server.fastmcp` 임포트가 실패했다.
+  → `mcp>=1.0.0,<2` 로 고정. (기존 개발 환경은 1.x 가 깔려 있어 드러나지 않던 잠재 버그)
+- **미사용 의존성 제거**: `llmlingua`·`sumy`·`scikit-learn` 은 코드 어디에서도 import 하지
+  않으면서 `torch`(1.1GB)·`transformers`·`accelerate`·`nltk` 를 끌어왔다.
+  → 제거. **깨끗한 설치 기준 5.3GB → 392MB**. "무비용·오프라인·CPU 전용·경량" 지향과 정합.
+- **누락 의존성 명시**: `httpx`·`numpy`·`onnxruntime`·`typing-extensions` 는 코드가 직접
+  쓰면서 전이 의존에만 기대고 있었다 → 명시 선언. 불필요한 `fastmcp` 는 제거
+  (`mcp.server.fastmcp` 는 `mcp` 패키지 소속이라 별도 패키지가 필요 없음).
+- `[project.optional-dependencies] analyze` 자리 신설 — 향후 로컬 요약·압축 모델을 넣더라도
+  core 는 경량으로 유지하기 위한 지점.
+
+### Changed
+- `docs/PERFORMANCE.md` — 35,768문서/143,800벡터 환경 재측정으로 1절·3절 갱신.
+  옛 수치와 어긋난 항목(int8 정확도 −6.5%p, RERANK=0 정확도 −13pp, pool 축소 시 recall 하락)을
+  실측 근거와 함께 정정하고, 코퍼스마다 뒤집힐 수 있음을 명시.
+- `docs/USER_MANUAL.md` — 요구사항을 실측값으로 교체(RAM 권장 4.5GB/최소 1.4GB, CPU 8코어 권장).
+
+### 실측 요약 (레퍼런스: 20코어/62GB, 35,768문서/143,800벡터)
+- 권장 설정 `RERANK_POOL=20` + `RERANK_THREADS=8`: p50 **~350–410ms**, 피크 RSS 3.1GB
+- 스레드는 **8이 최적** — 12부터 정체, 20에서 급락(1,659ms)
+- 벡터 양자화: **int8 recall@10 0.96–0.97**(4× 압축, 안전) / **binary 0.30**(384차원엔 부적합)
+
 ### 목표: 이중 청크 검색 인덱스 (원본 + 핵심요약본)
 
 회의록·명세서 등 긴 문서의 검색 품질을 높이기 위해 **원본 청크와 LLM 정제 청크를 함께 색인**한다.

@@ -4,15 +4,64 @@
 
 ## 1. 검색 속도 노브 (환경변수)
 
-| 변수 | 기본 | 효과 |
-|---|---|---|
-| `GERYON_RERANK_POOL` | 60 | BM25 후보 수. ↑ recall↑·느림 / ↓ 빠름·recall↓ |
-| `GERYON_RERANK_QUANTIZE` | 1(int8) | int8 양자화 — 약 28% 빠르고 모델 4배↓, 정확도 −6.5%p. fp32 는 `0` |
-| `GERYON_RERANK_THREADS` | CPU 코어 | rerank 스레드 수 |
-| `GERYON_RERANK_VEC_POOL` | 0 | 벡터 후보 보강(조사형 recall↑, 느림). 0=끔 |
-| `GERYON_RERANK_PASSAGE` | 1 | best-passage(제목+본문구절) 결합 — 본문중심 문서 recall↑(입력 2N) |
+> **설정을 손으로 고르기 전에** `python scripts/autotune.py analyze` 를 먼저 돌린다 —
+> 하드웨어·코퍼스 규모에서 권장 설정을 자동 산출한다. 도구 전체는 `docs/SETUP_TOOLING.md`.
 
-> rerank 비용은 대략 **후보 수 × (passage면 2배)** 에 비례한다. 느리면 먼저 `RERANK_POOL` 을 본다.
+아래는 **35,768문서 / 143,800벡터 / CPU 20코어 / 62GB** 환경에서
+`scripts/profile_resources.py` 로 잰 값이다(질의 8개, 워밍업 제외 p50, 설정마다 독립 프로세스).
+
+| 설정 | 피크 RSS | p50 | 비고 |
+|---|---:|---:|---|
+| 기본 (rerank on, int8, pool 60) | 3,095MB | ~900ms | 기준선 |
+| **`RERANK_POOL=20`** | 3,095MB | **~350–410ms** | **속도 2.5배 + 골든 정확도도 상승** — 아래 참고 |
+| `RERANK_PASSAGE=0` | 3,094MB | ~420ms | 2배 빠르나 본문중심 recall 크게 하락(골든 58%→33%) |
+| `RERANK_QUANTIZE=0` (fp32) | 2,719MB | ~1,650ms | int8 대비 **느리고 메모리도 더 씀**. int8 유지 권장 |
+| `RERANK=0` (rerank 끔) | **909MB** | ~3,200–4,900ms | 메모리 1/3, 대신 지연 3~5배. 측정 편차 큼 |
+| `RERANK_VEC_POOL=10/20` | — | +3배 이상 | 이 코퍼스에선 정확도 이득 없음(골든 동일/하락) |
+
+**스레드 확장성** (`GERYON_RERANK_THREADS`)
+
+| 1 | 2 | 4 | **8** | 12 | 16 | 20 |
+|---|---|---|---|---|---|---|
+| 3,416ms | 1,826ms | 1,093ms | **882ms** | 889ms | 954ms | 1,659ms |
+
+**8스레드가 최적**이고 그 이상은 이득이 없거나 해롭다(20스레드에서 급락 — 코어 경합).
+`0`(자동)으로 두지 말고 `min(8, cpu_count)` 로 명시 지정할 것.
+
+> rerank 비용은 대략 **후보 수 × (passage면 2배)** 에 비례한다. 느리면 `RERANK_POOL` 부터 줄인다.
+
+### 권장 조합
+
+**기본 권장** — 속도·정확도 모두 우세(실측)
+```
+GERYON_RERANK=1
+GERYON_RERANK_QUANTIZE=1
+GERYON_RERANK_POOL=20
+GERYON_RERANK_THREADS=8      # min(8, cpu_count)
+```
+→ 실측 **~350–410ms** · 피크 RSS 3.1GB → **RAM 4.5GB 이상 권장**
+
+**저메모리** (RAM 4.5GB 미만)
+```
+GERYON_RERANK=0
+GERYON_RERANK_THREADS=4
+```
+→ 피크 RSS 909MB(**RAM 1.4GB**면 동작) · 대신 지연 ~3.2초
+
+### ⚠ 옛 문서와 달라진 점 (재측정으로 정정)
+
+기존 문서는 29,000문서 기준이었고 아래 항목이 이번 실측과 어긋나 정정한다.
+
+- **`int8` 정확도 −6.5%p** → 골든셋(60케이스)에서 fp32와 **hit-rate 완전 동일**(35/60 = 35/60).
+  게다가 fp32가 더 느리고 메모리도 더 썼다. int8을 끌 이유가 확인되지 않았다.
+- **`RERANK=0` 이 정확도 −13pp** → 이번 골든셋에서는 오히려 **rerank off 가 더 정확**했고
+  (58% → 81%), McNemar 검정에서도 유의(p=0.0043)했다. 다만 **지연은 3~5배 늘어난다.**
+  이 상충은 미해결 상태이므로 `docs/BENCHMARK_METHODOLOGY.md` 의 판정 절차를 참고해
+  각자 코퍼스에서 재확인할 것.
+- **`RERANK_POOL` 은 낮추면 recall 하락** → 이번엔 pool=20 이 속도·정확도 **양쪽 모두** 우세했다.
+
+수치가 코퍼스마다 뒤집힐 수 있다는 게 요점이다. 문서 값을 그대로 믿지 말고
+`scripts/toolkit.py bench` 로 **자기 데이터에서** 재현할 것.
 
 ## 2. Federation 성능 (소스별 DB) [25_SILVER_FEDERATION]
 
@@ -84,14 +133,52 @@ N=1(단일) → RERANK_POOL 그대로 / N=3 → 20씩 → 후보 60 (단일 수�
 
 > rerank 자체의 기여: 같은 골든에서 rerank OFF(순수 하이브리드 RRF)는 **74%**로, rerank가 **+13pp**를 만든다.
 
+## 2.7 reranker 모델 교체 실험 — 한국어 변별력 실측
+
+경량 reranker(`Xenova/ms-marco-MiniLM-L-6-v2`, 0.08GB)가 한국어에서 동작하는지 직접 테스트.
+질의: `"프로모션 알고리즘"`, `"무중단 배포"` / 문서 4건(관련 2건 + 무관 2건).
+
+| 모델 | 크기 | 1위 정답률 | 점수 분포 | 한국어 |
+|---|---|---|---|---|
+| `Xenova/ms-marco-MiniLM-L-6-v2` | **0.08GB** | ✓ | **±0.4 (변별력 없음)** | ✗ |
+| `BAAI/bge-reranker-base` fp32 | 1.04GB | ✓ | ±11.9 | ✓ |
+| `BAAI/bge-reranker-base` **int8** | **0.28GB** | ✓ | ±13.5 **(fp32보다 넓음)** | ✓ |
+
+- 경량 모델은 점수 범위가 0.4 내외로 사실상 **랜덤 순위** — 한국어 reranker로 사용 불가.
+- int8이 fp32보다 점수 분포가 더 넓고 관련 문서 2위 회복 — 현재 기본값(int8) 유지가 맞다.
+- fastembed 공식 reranker 목록 기준, 한국어 지원이 확인된 경량 모델은 현재 없음.
+
+> **결론**: ternary/BitNet 방향의 초경량 reranker는 Python/fastembed 생태계에서 한국어 지원 미확인.
+> 현 `bge-reranker-base` int8(0.28GB)이 크기·정확도·한국어 지원 기준 최선이다.
+
 ## 3. 측정 방법 (필수)
+
+노브를 바꾸기 전후로 **품질과 비용을 둘 다** 재고, 차이가 우연이 아닌지까지 확인한다.
+도구 전체 설명은 `docs/SETUP_TOOLING.md`, 통계 판정 절차는 `docs/BENCHMARK_METHODOLOGY.md`.
+
 ```bash
-# 케이스당 속도 + hit율 — 노브 바꾸기 전후 비교
-python scripts/golden_eval.py tests/golden/cases_*.yml "<db1>,<db2>,..."
+# (1) 품질 — 설정별 골든 hit-rate 비교(조합 스윕)
+python scripts/toolkit.py bench <cases.yml> <db> --sweep RERANK_POOL=20,60,120
+
+# (2) 그 차이가 우연인지 — McNemar 검정
+python scripts/ab_significance.py <cases.yml> <db> --a RERANK_POOL=60 --b RERANK_POOL=20
+
+# (3) 비용 — 피크 RAM·지연·스레드 확장성 실측
+python scripts/profile_resources.py <db>
+
+# (4) 수집 후 회귀 판정 — 기준선 대비(코퍼스 성장 배수 감안), 종료코드로 합격/불합격
+python scripts/autotune.py measure --db <db>     # 최초 1회: 기준선 고정
+python scripts/autotune.py verify  --db <db>     # 이후 반복
 ```
-- **속도**: 케이스당 초(전체/케이스 수)
-- **품질**: top_k 안에 정답(hit율)
-- 한 번에 하나의 노브만 바꿔 인과를 분리한다.
+
+원칙:
+- **한 번에 하나의 노브만** 바꿔 인과를 분리한다.
+- hit-rate 차이는 그 자체로 결론이 아니다 — n=60 규모에서는 우연일 수 있으므로 (2)로 검정한다.
+- 골든셋이 자동생성(`golden_bootstrap.py`)이면 질의 스타일 편향이 결론을 뒤집을 수 있다.
+  `--terms` 를 바꿔 여러 밀도의 골든셋에서 같은 결론이 나오는지 확인할 것(방법론 문서 참고).
+- 룰기반 골든은 **키워드 나열**이라 문장 관련성을 학습한 rerank 에 구조적으로 불리하다.
+  `python scripts/golden_llm.py <db>` 로 **자연어 질의 골든셋**을 따로 만들어,
+  같은 비교를 양쪽에서 돌리고 **결론이 일치할 때만** 채택한다(방법론 문서 기법 3).
 
 ## 4. 색인(ingest) 속도
 - `--no-vector`: 임베딩 생략(키워드+rerank만) — 색인 대폭 단축

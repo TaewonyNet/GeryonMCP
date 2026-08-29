@@ -76,7 +76,7 @@ RERANK_PASSAGE = os.getenv("GERYON_RERANK_PASSAGE", "1") in ("1", "true", "True"
 # 기본 OFF·옵션 유지. 조사형 근본해결은 trigram 병행·ANN이 적합(백로그).
 RERANK_VEC_POOL = int(os.getenv("GERYON_RERANK_VEC_POOL", "0"))
 # onnxruntime 스레드 — PoC: 8스레드가 기본 대비 ~20% 빠름. 0=자동(미지정).
-RERANK_THREADS = int(os.getenv("GERYON_RERANK_THREADS", str(os.cpu_count() or 0)))
+RERANK_THREADS = int(os.getenv("GERYON_RERANK_THREADS", "0"))
 # int8 동적 양자화 — 기본 ON. production int8 77.4%/741ms vs fp32 83.9%/1034ms:
 # ~28% 빠르고 모델 4배↓(1.11→0.28GB)이나 정확도 -6.5%p. fp32 복귀는 GERYON_RERANK_QUANTIZE=0.
 # `onnx` 패키지 필요(pyproject 포함). 양자화 실패 시 fp32 graceful fallback.

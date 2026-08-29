@@ -34,6 +34,9 @@ build/
 .ruff_cache/
 .pytest_cache/
 
+# AI 에이전트 작업 지침(로컬 전용 — 공개 저장소에 포함하지 않음)
+CLAUDE.md
+
 # OpenCode 런타임 세션 상태(커밋 제외)
 .omo/
 .omc/

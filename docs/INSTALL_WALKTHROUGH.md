@@ -7,7 +7,8 @@
 ---
 
 ## 0. 요구사항
-- Python 3.10+ , 메모리 16GB 이내(CPU 전용), 디스크 ~2GB(모델·인덱스)
+- Python 3.10+ , 메모리 **4.5GB 이상 권장**(최소 1.4GB, CPU 전용), CPU 8코어 권장, 디스크 ~3GB(모델·인덱스)
+  - 내 환경 권장값 산출: `python scripts/autotune.py analyze` — 자세히는 `docs/SETUP_TOOLING.md`
 - 인터넷은 **모델 1회 다운로드 + 데이터 수집** 때만. 검색은 완전 오프라인.
 
 ## 1. 설치

@@ -18,7 +18,7 @@ def test_strip_whitespace():
 
 
 def test_shorten_urls_local_only():
-    t = "see https://x.atlassian.net/wiki/spaces/TE/pages/123/Long?version=4&x=y end"
+    t = "see https://x.atlassian.net/wiki/spaces/SPACE/pages/123/Long?version=4&x=y end"
     out = shorten_urls(t)
     assert "?" not in out and "atlassian" in out  # 쿼리 제거·외부 호출 없음
 
