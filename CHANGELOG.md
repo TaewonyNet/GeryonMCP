@@ -7,6 +7,15 @@
 
 ## [Unreleased] — 1.3.0 목표
 
+### Changed — `RERANK_POOL` 기본값 60 → 20 (랭킹 결과 변경)
+cross-encoder 후보 수는 **키울수록 정확도가 떨어진다**. FTS5 상위는 이미 잘 정렬돼 있어
+아래쪽을 끌어올리면 재정렬이 순위를 흐트러뜨린다(pool 20→60→120 에서 hit 200→169→163 단조 감소).
+- 두 골든셋 **모두에서** 옛 기본값보다 우세: 룰기반 300건 200 vs 169(McNemar **p=0.0000**),
+  LLM 자연어 43건 35 vs 34(p=1.0, 동등하나 방향 일치). **속도 2.5배**.
+- pool 5/10 은 룰기반 최고(226)지만 LLM 최악(30)으로 방향이 반대라 **채택하지 않았다** —
+  키워드 나열 질의에만 유리한 골든셋 아티팩트(교차검증 규칙이 잘못된 채택을 막은 사례).
+- 측정 이력은 `config.py` 주석과 `docs/PERFORMANCE.md` 에 기록.
+
 ### Fixed — static_score 가 랭킹에 반영되지 않던 문제 (동작 변경)
 `quality_signals.py` 가 문서마다 계산해 저장하던 `static_score`
 (recency·richness(길이)·backlink_centrality)가 **rerank 경로에 연결돼 있지 않아**,

@@ -81,7 +81,19 @@ RERANK_ENABLED = os.getenv("GERYON_RERANK", "1") not in ("0", "false", "False", 
 # 기본 reranker는 MIT 라이선스(상업 OK). jina-v2-multilingual은 CC-BY-NC(비상업)라
 # 오픈소스 부적합 → bge-reranker-base(MIT)로 교체, 골든 정확도 동급(86.5%/77.4%) 검증.
 RERANK_MODEL = os.getenv("GERYON_RERANK_MODEL", "BAAI/bge-reranker-base")
-RERANK_POOL = int(os.getenv("GERYON_RERANK_POOL", "60"))  # 키워드 후보 수(정확도↔지연 트레이드오프; PoC 최적 60)
+# cross-encoder 에 넘길 키워드 후보 수. 크게 잡을수록 **나빠진다** — FTS5 상위는 이미 잘
+# 정렬돼 있고, 아래쪽을 끌어올리면 재정렬이 순위를 흐트러뜨린다(단조 감소를 실측).
+#
+# 측정(두 골든셋 교차검증):
+#   pool          5     10     20     40     60     120
+#   룰기반 300건  226    226    200    174    169    163
+#   LLM 자연어 43건 30     30     35      –     34      –
+#   → 20 이 **양쪽 모두에서 기본값 60 보다 우세**하고 2.5배 빠르다.
+#     룰기반 60 vs 20 McNemar p=0.0000(유의), LLM 60 vs 20 p=1.0(동등).
+#   → 5/10 은 룰기반에서만 최고이고 LLM 에서는 최악이라 **채택하지 않는다**
+#     (키워드 나열 질의에 유리한 골든셋 아티팩트).
+# 자기 코퍼스에서 재측정: scripts/toolkit.py bench <cases> <db> --sweep RERANK_POOL=10,20,60
+RERANK_POOL = int(os.getenv("GERYON_RERANK_POOL", "20"))
 # best-passage MAX 결합(1=ON): rerank 입력에 제목+쿼리매칭본문구절을 더해 max 합산 → 본문중심 문서 회복.
 RERANK_PASSAGE = os.getenv("GERYON_RERANK_PASSAGE", "1") in ("1", "true", "True")
 # 벡터 후보 합류 수(0=off, 기본 OFF). unicode61의 한국어 조사·복합형 놓침(17~82%)을
@@ -219,7 +231,7 @@ CONFLUENCE_API_TOKEN=__YOUR_API_TOKEN__
 # ── 7) 검색·재정렬 튜닝 (기본값 권장) ──
 # GERYON_RERANK=1                       # 재정렬 on/off(0=하이브리드 폴백)
 # GERYON_RERANK_MODEL=BAAI/bge-reranker-base
-# GERYON_RERANK_POOL=60                 # 후보 풀(정확도↔속도)
+# GERYON_RERANK_POOL=20                 # 후보 풀. 키우면 오히려 정확도↓(실측) — 기본 20 권장
 # GERYON_RERANK_PASSAGE=1               # best-passage(1=본문중심 강화, 0=제목만·빠름)
 # GERYON_RERANK_VEC_POOL=0              # 벡터 후보 합류(0=off)
 # GERYON_RERANK_QUANTIZE=1              # int8(1=빠름·모델 4배↓, 0=fp32 정확도)

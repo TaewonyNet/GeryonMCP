@@ -179,7 +179,7 @@ geryon watch --source confluence --interval 300   # 특정 소스, 5분 간격
 |---|---|---|---|
 | `GERYON_RERANK_THREADS` | 0(자동) | ONNX rerank 스레드 수 | **속도 최대 레버.** 기본 자동보다 명시 지정이 빠름. `cpu_count/2~3` 권장(예: 8코어 PC → `4`) |
 | `GERYON_RERANK_PASSAGE` | 1 | 본문중심 검색 강화 | 0=제목만·3배 빠름, 본문 recall −34pp. 제목이 잘 정리된 문서라면 0도 무방 |
-| `GERYON_RERANK_POOL` | 60 | 재정렬 후보 수 | 낮추면 빠름·recall↓. pool=20은 3배 빠름, pool=120은 체감 차이 없음 |
+| `GERYON_RERANK_POOL` | **20** | 재정렬 후보 수 | **키우면 오히려 정확도가 떨어진다**(실측: 20→60→120에서 hit 200→169→163). FTS5 상위는 이미 잘 정렬돼 있어, 아래를 끌어올리면 재정렬이 순위를 흐트러뜨림. 기본 20이 가장 빠르고 정확 |
 | `GERYON_RERANK_QUANTIZE` | 1 | int8 양자화 | **1 권장.** 실측상 fp32(0)가 오히려 느리고(~1,650ms vs ~900ms) 메모리도 더 씀. 골든 정확도는 동일 |
 | `GERYON_RERANK_VEC_POOL` | 0 | 벡터 후보 보강 | 0=끔. 켜면(예: 10) 조사형 recall +2%p, 속도 −28% |
 | `GERYON_RERANK_MODEL` | bge-reranker-base | 재정렬 모델 | — |
