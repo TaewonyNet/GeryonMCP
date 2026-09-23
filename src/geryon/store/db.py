@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from geryon.config import DB_PATH, ensure_directories
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 DDL_STATEMENTS = [
     """
@@ -97,13 +97,19 @@ DDL_STATEMENTS = [
     END;
     """,
     """
+    -- ⚠️ WHEN 가드 필수. 없으면 `static_score` 같은 «본문과 무관한» 컬럼만 바꿔도
+    --    FTS 본문이 통째로 재색인된다. 실측(2026-09-20): 수만 행 점수 갱신이
+    --    10분을 넘겼고, 계측 결과 그 시간이 전부 이 트리거였다(앞단은 1초 미만).
+    --    같은 정의가 _V9_DDL 에도 있다(기존 DB 교체용) — 고칠 때 둘 다 고칠 것.
     CREATE TRIGGER IF NOT EXISTS trg_documents_update AFTER UPDATE ON documents
-    BEGIN
-        UPDATE documents_fts
-        SET title = new.title,
-            body_markdown = new.body_markdown
-        WHERE doc_id = new.doc_id;
-    END;
+        WHEN new.title IS NOT old.title
+          OR new.body_markdown IS NOT old.body_markdown
+        BEGIN
+            UPDATE documents_fts
+            SET title = new.title,
+                body_markdown = new.body_markdown
+            WHERE doc_id = new.doc_id;
+        END;
     """,
     """
     CREATE TRIGGER IF NOT EXISTS trg_documents_delete AFTER DELETE ON documents
@@ -235,7 +241,38 @@ _V8_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_selection_log_doc ON selection_log(doc_id);",
 ]
 
-DDL_STATEMENTS = DDL_STATEMENTS + _V4_DDL + _V5_DDL + _V6_DDL + _V7_DDL + _V8_DDL
+# v9: 색인 갱신 비용 두 건을 고친다. 둘 다 2026-09-20 실측으로 드러났다.
+#
+# ① `documents(source_id)` 색인 — 없어서 O(N²) 였다.
+#    제약이 `UNIQUE(source, source_id)` 라 `WHERE source_id = ?` 는 복합 색인의
+#    선두 컬럼이 아니어서 못 탄다(EXPLAIN: `SCAN documents`). 그런데
+#    `repository.update_static_scores` 가 문서마다 그 UPDATE 를 돈다 —
+#    실측 수만 문서에서 문서 수만큼의 전체 스캔 ≈ 수십억 행 방문.
+#
+# ② `trg_documents_update` 에 WHEN 가드 — 없어서 «점수만 바꿔도 본문이 재색인»됐다.
+#    트리거가 UPDATE 종류를 가리지 않고 `documents_fts` 의 title/body 를 다시 쓴다.
+#    `static_score` 한 컬럼만 바꾸는 배치가 FTS 전체 재색인을 유발했고,
+#    계측 결과 재계산 600초 중 **앞단 전부가 1초 미만, 나머지 전부가 이 트리거**였다.
+#    제목·본문이 실제로 바뀐 경우에만 FTS 를 건드리게 한다.
+#
+# ⚠️ 트리거는 `IF NOT EXISTS` 로는 교체되지 않는다. DROP 후 재생성해야 한다.
+_V9_DDL = [
+    "CREATE INDEX IF NOT EXISTS idx_documents_source_id ON documents(source_id);",
+    "DROP TRIGGER IF EXISTS trg_documents_update;",
+    """
+    CREATE TRIGGER trg_documents_update AFTER UPDATE ON documents
+        WHEN new.title IS NOT old.title
+          OR new.body_markdown IS NOT old.body_markdown
+        BEGIN
+            UPDATE documents_fts
+            SET title = new.title,
+                body_markdown = new.body_markdown
+            WHERE doc_id = new.doc_id;
+        END;
+    """,
+]
+
+DDL_STATEMENTS = DDL_STATEMENTS + _V4_DDL + _V5_DDL + _V6_DDL + _V7_DDL + _V8_DDL + _V9_DDL
 
 # 버전별 증분 마이그레이션 (idempotent — 모든 문은 IF NOT EXISTS)
 MIGRATIONS: dict[int, list[str]] = {
@@ -244,6 +281,11 @@ MIGRATIONS: dict[int, list[str]] = {
     6: _V6_DDL,
     7: _V7_DDL,
     8: _V8_DDL,
+    # ⚠️ v9 는 여기 두지 않는다. 문장이 전부 `documents` 를 참조하는데, 아주 옛
+    #    버전(v3 이하)에서 올라오는 DB 는 그 시점에 `documents` 가 없을 수 있다
+    #    (`tests/test_db.py::test_migration_v3_to_latest` 가 그 경우를 모사한다).
+    #    v5·v6·v7 과 같은 선례대로 `_apply_migrations` 에서 테이블 존재를 확인한
+    #    뒤 실행한다. 신규 DB 는 `DDL_STATEMENTS` 에 포함돼 그대로 만들어진다.
 }
 
 
@@ -287,6 +329,15 @@ def _apply_migrations(conn: sqlite3.Connection, from_version: int, to_version: i
                     "INSERT INTO documents_fts (doc_id, title, body_markdown) "
                     "SELECT doc_id, title, body_markdown FROM documents;"
                 )
+        # v9: documents(source_id) 색인 + trg_documents_update 의 WHEN 가드.
+        #     둘 다 `documents` 를 참조하므로 테이블이 있을 때만 적용한다.
+        if v == 9:
+            docs_exists = conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='documents'"
+            ).fetchone()[0]
+            if docs_exists:
+                for stmt in _V9_DDL:
+                    _ = conn.execute(stmt)
         # v7: 조사 정규화 FTS 백필 — 기존 documents를 normalize 해 documents_fts_norm 채움(재임베딩 불필요).
         if v == 7:
             docs_exists = conn.execute(

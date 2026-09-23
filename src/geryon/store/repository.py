@@ -403,12 +403,38 @@ class SqliteRepository(Repository):
             raise e
         return n
 
-    def upsert_page_links(self, links: list[tuple[str, str]]) -> int:
-        """(src_page_id, dst_page_id) 링크 배치 삽입."""
+    def upsert_page_links(self, links: list[tuple[str, str]],
+                          owner_src_ids: set[str] | None = None) -> int:
+        """(src_page_id, dst_page_id) 링크 배치 삽입.
+
+        Args:
+            links: 이번에 색인한 문서들에서 추출한 링크.
+            owner_src_ids: **이번 실행이 소유한 src_page_id 집합.** 주면 그 범위만
+                지우고 다시 넣는다. 안 주면 `links` 에 등장하는 src 만 지운다.
+
+        ⚠️ 2026-09-20 데이터 손실 버그 수정.
+
+        이전 구현은 `DELETE FROM page_links` 로 **테이블 전체**를 지우고 이번
+        실행분만 넣었다. 그런데 ingest 는 **원천별로** 돈다 — `--source jira`
+        전체 색인이 confluence 가 쌓아 둔 링크를 통째로 날렸다.
+
+        실측: 수만 개였던 `page_links` 가 jira `--full` 한 번 뒤
+        **0개**가 됐다. `static_score` 의 backlink 성분(가중치 0.4, 셋 중 최대)이
+        전 문서에서 죽었는데 아무 경고도 없었다.
+
+        삭제 범위를 «이번 실행이 소유한 src» 로 좁혀 다른 원천의 링크를 보존한다.
+        링크가 사라진 문서도 정리되도록, 이번에 나온 링크의 src 만이 아니라
+        호출부가 넘긴 소유 집합 전체를 지운다.
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
+        scope = set(owner_src_ids) if owner_src_ids is not None else {s for s, _ in links}
         try:
-            conn.execute("DELETE FROM page_links")
+            if scope:
+                cursor.executemany(
+                    "DELETE FROM page_links WHERE src_page_id = ?;",
+                    [(s,) for s in scope],
+                )
             cursor.executemany(
                 "INSERT OR IGNORE INTO page_links (src_page_id, dst_page_id) VALUES (?, ?);",
                 links
@@ -418,6 +444,21 @@ class SqliteRepository(Repository):
             conn.rollback()
             raise e
         return len(links)
+
+    def backlink_counts(self) -> dict[str, int]:
+        """저장된 `page_links` **전체**에서 수신 링크 수를 역집계한다.
+
+        ⚠️ 2026-09-20 신설. 이전에는 호출부가 «이번 실행에서 추출한 링크»만으로
+        집계했다. 그때는 `upsert_page_links` 가 매번 테이블을 비웠으므로 둘이
+        같았지만, 삭제 범위를 원천별로 좁힌 뒤로는 **같지 않다** — 이번 실행분만
+        세면 다른 원천이 건 backlink 를 못 본다. 저장된 그래프를 보는 게 맞다.
+        """
+        conn = self.get_connection()
+        counts: dict[str, int] = {}
+        for (dst,) in conn.execute("SELECT dst_page_id FROM page_links;"):
+            key = str(dst)
+            counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def get_related_by_links(self, source_id: str, k: int = 10) -> list[str]:
         """page_links에서 1-hop 형제 doc_ids 반환."""

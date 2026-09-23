@@ -1,5 +1,6 @@
 import json
 import hashlib
+import re
 from datetime import datetime, timezone
 from typing import Any
 from bs4 import BeautifulSoup, Comment
@@ -10,12 +11,44 @@ from enum import Enum
 from geryon.domain.models import RawRecord, Document
 from geryon.index.classify import classify_doc_type
 
+#: 콜론 없는 UTC 오프셋(`+0900`)을 `+09:00` 으로 고치기 위한 패턴.
+#: 끝이 `±HHMM` 이면서 그 앞이 시:분:초(또는 소수초)인 경우만 잡는다 —
+#: `2026-09-20` 처럼 날짜만 있는 문자열의 `-09` 를 오프셋으로 오인하면 안 된다.
+_TZ_NO_COLON = re.compile(r"(?<=\d)([+-])(\d{2})(\d{2})$")
+
+
 def parse_iso8601(val: Any) -> datetime | None:
+    """ISO8601 문자열 → aware/naive datetime. 못 읽으면 None.
+
+    ⚠️ 2026-09-20 결함 수정. 이전 구현은 `Z` 접미사만 다루고 **콜론 없는
+    오프셋을 처리하지 않았다.** Jira REST 가 `2023-12-11T10:17:37.790+0900`
+    형식을 쓰는데 Python 3.10 의 `datetime.fromisoformat` 은 `+09:00` 을
+    요구하므로 전건이 예외 → `None` 이 됐다.
+
+    실측 피해(2026-09-20, 실물 인덱스 수만 문서 규모):
+      jira        created/updated **100% NULL**
+      bitbucket   created 100% NULL(이쪽은 커넥터가 아예 안 담는 별건)
+      전체의 약 1/5 이 날짜 없음
+
+    게다가 `quality_signals._recency_score` 는 날짜가 없으면 중립값 0.3 을
+    쓰므로, **날짜를 못 읽은 문서가 오히려 static_score 에서 유리**했다
+    (날짜 있음 평균 0.1534 < 날짜 없음 평균 0.1754).
+
+    v1.0.0 부터 넉 달간 아무도 몰랐다 — 예외를 삼키고 `None` 을 돌려주는데
+    ingest 는 `errors 0` 으로 성공 보고했기 때문이다. 그래서 파싱 성공률을
+    ingest 출력에 **필수 필드로** 넣었다(`pipeline/ingest.py`). 검사 항목을
+    늘리는 게 아니라 안 볼 수 없게 만드는 쪽이다.
+    """
     if not isinstance(val, str):
         return None
     s = val.strip()
-    if s.endswith('Z'):
-        s = s[:-1] + '+00:00'
+    if not s:
+        return None
+    if s.endswith(("Z", "z")):
+        s = s[:-1] + "+00:00"
+    else:
+        # `+0900` → `+09:00`. Python 3.11+ 는 자체 처리하지만 3.10 은 못 한다.
+        s = _TZ_NO_COLON.sub(r"\1\2:\3", s)
     try:
         return datetime.fromisoformat(s)
     except Exception:

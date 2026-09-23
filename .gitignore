@@ -11,6 +11,9 @@ secrets.*
 # Bronze 원본 데이터 — 대용량, 수집으로 재생성(버전관리 제외)
 # 기본 출력은 모두 bronze/ 아래로 모아 한 줄로 자동 커버한다.
 bronze/
+# ⚠️ `bronze/` 는 디렉터리만 맞춘다. bronze 를 다른 디스크로 옮기고
+#    심볼릭 링크로 바꾸면 이 규칙에 안 걸려 커밋 대상이 된다(2026-09-22 실제로 그랬다).
+bronze
 # 레거시/커스텀 기본 경로 호환
 confluence_db/
 confluence_db_sample/

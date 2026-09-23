@@ -91,3 +91,81 @@ def test_git_source_type_runtime_detection(tmp_path):
     assert conn.source_type == SourceType.BITBUCKET
     # manifest.last_change 기반 증분 지원(GitAcquirer 가 git diff/log 로 기록)
     assert conn.supports_incremental is True
+
+
+# ═══════════════ ingest 출력의 «필수 필드» — 날짜 파싱률 · 0건 경보 (2026-09-20)
+#
+# 별도 점검 명령을 만들지 않고 기존 출력에 박아 넣는다. 점검 단계는 바쁠 때
+# 건너뛰지만 출력 필드는 안 볼 수가 없다. 이 시험은 그 «필수» 를 고정한다 —
+# 키가 조건부로 사라지면 "없음"과 "0%"가 구분되지 않아 또 무음이 된다.
+
+def test_ingest_통계에_날짜_파싱률_키가_항상_있다(tmp_path):
+    """날짜를 주는 문서가 하나도 없어도 키 자체는 존재해야 한다."""
+    from geryon.pipeline.ingest import IngestionPipeline
+    from geryon.store.repository import SqliteRepository
+    from geryon.domain.models import RawRecord, SourceType
+
+    class _NoDate:
+        source_type = SourceType.CONFLUENCE
+        supports_incremental = False
+        def healthcheck(self): return True
+        def iter_raw(self, only=None):
+            yield RawRecord(source=SourceType.CONFLUENCE, source_id="a",
+                            raw_body="본문", raw_format="markdown", title="제목",
+                            url=None, space_or_repo="S", metadata={})
+
+    repo = SqliteRepository(str(tmp_path / "t.db"))
+    stats = IngestionPipeline(repository=repo).run(_NoDate(), full_reindex=True)
+
+    assert "date_seen" in stats and "date_parsed" in stats
+    assert "date_parse_rate" in stats          # 날짜 준 문서 0건이어도 키는 있다
+    assert stats["date_seen"] == 0
+    assert stats["date_parse_rate"] is None    # 0/0 은 0% 가 아니라 '해당 없음'
+
+
+def test_날짜를_못_읽으면_파싱률이_0으로_드러난다(tmp_path):
+    """Jira `+0900` 회귀 감시 — 파서가 다시 깨지면 이 값이 0.0 이 된다."""
+    from geryon.pipeline.ingest import IngestionPipeline
+    from geryon.store.repository import SqliteRepository
+    from geryon.domain.models import RawRecord, SourceType
+
+    class _Jira:
+        source_type = SourceType.JIRA
+        supports_incremental = False
+        def healthcheck(self): return True
+        def iter_raw(self, only=None):
+            for i in range(3):
+                yield RawRecord(
+                    source=SourceType.JIRA, source_id=f"K-{i}", raw_body="본문",
+                    raw_format="markdown", title=f"이슈 {i}", url=None,
+                    space_or_repo="K",
+                    metadata={"created_at": "2023-12-11T10:17:37.790+0900",
+                              "updated_at": "2023-12-11T10:21:29.590+0900"})
+
+    repo = SqliteRepository(str(tmp_path / "t2.db"))
+    stats = IngestionPipeline(repository=repo).run(_Jira(), full_reindex=True)
+
+    assert stats["date_seen"] == 3
+    assert stats["date_parsed"] == 3, "Jira +0900 을 못 읽고 있다 — parse_iso8601 확인"
+    assert stats["date_parse_rate"] == 1.0
+
+
+def test_한_건도_못_읽으면_empty_source_로_드러난다(tmp_path):
+    """healthcheck 는 통과했는데 레코드가 0건인 «무음 0건» 을 잡는다."""
+    from geryon.pipeline.ingest import IngestionPipeline
+    from geryon.store.repository import SqliteRepository
+    from geryon.domain.models import SourceType
+
+    class _Empty:
+        source_type = SourceType.CONFLUENCE
+        supports_incremental = False
+        db_path = "/nonexistent/bronze"
+        def healthcheck(self): return True    # 통과시키고 0건을 낸다
+        def iter_raw(self, only=None):
+            return iter(())
+
+    repo = SqliteRepository(str(tmp_path / "t3.db"))
+    stats = IngestionPipeline(repository=repo).run(_Empty(), full_reindex=True)
+
+    assert stats["records_seen"] == 0
+    assert stats.get("empty_source") is True

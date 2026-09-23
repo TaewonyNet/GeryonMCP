@@ -40,6 +40,18 @@ def run_config(cases_file: str, db: str, env_overrides: dict[str, str], out_json
     return json.loads(Path(out_json).read_text(encoding="utf-8"))
 
 
+def _min_nd(alpha: float) -> int:
+    """유의수준 alpha 를 만족할 수 있는 최소 불일치쌍 수.
+
+    양측 정확검정에서 가장 극단적인 경우(b=0, c=n)의 p 는 2·0.5^n 이므로,
+    2·0.5^n < alpha 를 만족하는 최소 n 을 찾는다. alpha=0.05 → 6.
+    """
+    n = 1
+    while n < 100 and mcnemar_exact_p(0, n) >= alpha:
+        n += 1
+    return n
+
+
 def mcnemar_exact_p(b: int, c: int) -> float:
     """정확 이항검정(양측) — b,c: 불일치 쌍 개수. scipy 없이 표준 라이브러리만으로 계산."""
     n = b + c
@@ -111,13 +123,40 @@ def main() -> None:
     print(f"  A만 맞음(b): {a_only}   B만 맞음(c): {b_only}")
 
     p = mcnemar_exact_p(a_only, b_only)
+    n_d = a_only + b_only
+    # 이 불일치쌍 수에서 **가능한 최소 p** — 한쪽으로 완전히 몰렸을 때(b=0, c=n_d).
+    # 이것이 α 이상이면 어떤 결과가 나와도 유의할 수 없다 = 「검정 불가」이지
+    # 「효과 없음」이 아니다.
+    p_floor = mcnemar_exact_p(0, n_d) if n_d else 1.0
+    detectable = p_floor < a.alpha
+
     sig = "유의함 ✅" if p < a.alpha else "유의하지 않음(우연일 가능성) ⚠️"
     print(f"\n=== McNemar 정확검정 ===")
+    print(f"  불일치쌍 n_d = {n_d}   (b={a_only}, c={b_only})")
+    print(f"  이 n_d 에서 가능한 최소 p = {p_floor:.4f}")
     print(f"  p-value = {p:.4f}  (α={a.alpha})")
-    print(f"  → {sig}")
-    if p >= a.alpha:
-        print("  ⚠ 이 표본(n={0})으로는 A/B 차이가 통계적으로 우연과 구분되지 않습니다.".format(n))
-        print("     골든셋을 늘리거나(권장 n≥100~200), 케이스 질을 높여야 신뢰 가능한 결론이 됩니다.")
+
+    # ⚠️ 2026-09-20 추가 — 「검정 불가」와 「효과 없음」을 가른다.
+    #
+    # 실제 사고: RANKING_STATIC_ALPHA 스윕에서 b=1, c=3 → n_d=4 → p=0.625 가
+    # 나왔고, 이것이 "유의하지 않음 → 효과 없음"으로 기록됐다. 그런데 n_d=4 에서
+    # 가능한 최소 p 는 0.125 다 — **어떤 결과가 나와도 α=0.05 를 넘을 수 없는,
+    # 처음부터 통과 불가능한 검정**이었다. 그 기록을 근거로 "구조 신호는 랭킹에
+    # 안 먹힌다"는 결론이 여러 번 재인용됐다.
+    #
+    # p<0.05 가 가능하려면 n_d ≥ 6 이 필요하다(2×0.5^6 = 0.031).
+    # 그래서 p 만 찍지 않고 n_d 와 최소 가능 p 를 **항상 같이** 출력한다.
+    if not detectable:
+        print(f"  → ❗ **검정 불가** — 불일치쌍이 {n_d}개뿐이라 α={a.alpha} 를 만족할 수")
+        print(f"       있는 결과 자체가 존재하지 않습니다(최소 가능 p={p_floor:.4f}).")
+        print( "       이 결과를 「효과 없음」으로 기록하지 마십시오. 「측정되지 않음」입니다.")
+        print(f"       α={a.alpha} 로 판정하려면 불일치쌍이 최소 {_min_nd(a.alpha)}개 필요합니다.")
+    else:
+        print(f"  → {sig}")
+        if p >= a.alpha:
+            print(f"  ⚠ 검정은 가능한 상태이며(최소 가능 p={p_floor:.4f} < α), 그럼에도")
+            print( "     차이가 우연과 구분되지 않습니다. 이건 「효과 없음」쪽 근거가 됩니다.")
+            print(f"     불일치쌍 {n_d}개 중 {a_only}:{b_only} 로 갈렸습니다.")
 
     def summarize(label: str, terms: list[int]) -> None:
         if not terms:

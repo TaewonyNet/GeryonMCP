@@ -212,3 +212,60 @@ class TestStaticScoreInHybrid:
         # 직접 DB에서 static_score 확인
         assert repo.get_static_score("dlow") == pytest.approx(0.1, abs=1e-6)
         assert repo.get_static_score("dhigh") == pytest.approx(0.9, abs=1e-6)
+
+
+# ══════════════════════ page_links 데이터 손실 회귀 (2026-09-20)
+
+def test_다른_원천의_page_links를_지우지_않는다(tmp_path):
+    """⚠️ 실제로 일어난 데이터 손실의 회귀 시험.
+
+    이전 구현은 `DELETE FROM page_links` 로 테이블 «전체»를 비우고 이번
+    실행분만 넣었다. ingest 는 원천별로 도는데 삭제는 전역이라,
+    `--source jira` 전체 색인 한 번에 confluence 가 쌓아 둔 링크가 전부
+    날아갔다 — 실측 수만 건 → 0. `static_score` 의 backlink 성분(가중치 0.4)이
+    전 문서에서 죽었는데 아무 경고도 없었다.
+    """
+    repo = SqliteRepository(str(tmp_path / "links.db"))
+    for d in (_make_doc("dA", "conf1", "A"), _make_doc("dB", "conf2", "B"),
+              _make_doc("dC", "jira1", "C")):
+        repo.upsert(d)
+
+    # 원천 1(confluence)이 링크를 쌓는다
+    repo.upsert_page_links([("conf1", "conf2")], owner_src_ids={"conf1", "conf2"})
+    conn = repo.get_connection()
+    assert conn.execute("SELECT count(*) FROM page_links").fetchone()[0] == 1
+
+    # 원천 2(jira)가 «링크 없이» 전체 색인된다 — 예전엔 여기서 위가 날아갔다
+    repo.upsert_page_links([], owner_src_ids={"jira1"})
+
+    rows = conn.execute("SELECT src_page_id, dst_page_id FROM page_links").fetchall()
+    assert rows == [("conf1", "conf2")], f"다른 원천의 링크가 사라졌다: {rows}"
+
+
+def test_자기_원천의_사라진_링크는_정리된다(tmp_path):
+    """소유 범위 안에서는 «교체» 여야 한다 — 안 그러면 옛 링크가 영원히 남는다."""
+    repo = SqliteRepository(str(tmp_path / "links2.db"))
+    for d in (_make_doc("dA", "p1", "A"), _make_doc("dB", "p2", "B"),
+              _make_doc("dC", "p3", "C")):
+        repo.upsert(d)
+
+    repo.upsert_page_links([("p1", "p2"), ("p1", "p3")], owner_src_ids={"p1"})
+    conn = repo.get_connection()
+    assert conn.execute("SELECT count(*) FROM page_links").fetchone()[0] == 2
+
+    # p1 이 p3 링크를 지운 채 재색인되면 그 행도 사라져야 한다
+    repo.upsert_page_links([("p1", "p2")], owner_src_ids={"p1"})
+    rows = conn.execute("SELECT dst_page_id FROM page_links").fetchall()
+    assert rows == [("p2",)], f"사라진 링크가 남아 있다: {rows}"
+
+
+def test_backlink_counts는_저장된_그래프_전체를_본다(tmp_path):
+    """이번 실행분이 아니라 테이블 전체. 부분 ingest 에서 갈린다."""
+    repo = SqliteRepository(str(tmp_path / "links3.db"))
+    for d in (_make_doc("dA", "p1", "A"), _make_doc("dB", "p2", "B"),
+              _make_doc("dC", "p3", "C")):
+        repo.upsert(d)
+    repo.upsert_page_links([("p1", "p2")], owner_src_ids={"p1"})
+    repo.upsert_page_links([("p3", "p2")], owner_src_ids={"p3"})
+
+    assert repo.backlink_counts() == {"p2": 2}
