@@ -20,6 +20,20 @@
   경고와 함께 그 폴더를 계속 쓴다. `mv ./bronze ~/.geryon/bronze` 또는 `GERYON_BRONZE_DIR` 지정으로 해소.
 - 수집기·커넥터에 흩어져 있던 하드코딩 기본값(`"bronze/…"`)을 모두 `config.default_bronze()` 로 통일.
 
+### Added — `geryon serve --transport http` (서버 하나를 여러 세션이 공유)
+stdio 는 세션마다 서버 프로세스가 뜬다. 모델을 올린 서버는 프로세스당 수 GB(실측 rerank on ~2GB)라
+세션이 많으면 메모리가 세션 수만큼 곱해진다. HTTP 로 하나를 띄워 공유한다(기본 127.0.0.1:8765).
+`docs/MCP_INSTALL.md` §2-b' 에 systemd 등록 예시.
+
+### Changed — MCP `reindex` 도구 기본 비노출 (`GERYON_MCP_REINDEX=1` 로 켬)
+모델이 호출하면 항상 전체 모드 + prune 이고 `full=True` 면 Safety Gate 까지 우회한다.
+서버 안에서 동기로 돌아 수 시간 검색이 멈추고 sync 잠금도 거치지 않는다. 색인 갱신은 `sync`/`watch` 로.
+
+### Fixed — MCP 등록이 실행 파일 이름만 적던 문제
+`geryon ... --mcp` 가 `"command": "geryon"` 으로 등록해, 격리 venv 설치면 에디터의 PATH 에 없어
+서버가 조용히 안 떴다. 이제 절대경로로 기록한다. 문서의 전역 등록 예시도 `-s user` 누락(=프로젝트
+한정 등록) 을 바로잡았다.
+
 ### Fixed — watch 를 데몬으로 돌릴 때의 결함
 - **설정 파일**: `./.env` 만 읽어 systemd·cron(실행 폴더가 홈) 에서는 자격증명·스페이스를 통째로 잃었다.
   이제 `./.env` → `~/.geryon/.env` 순으로 읽는다(앞이 우선, OS 환경변수 최우선).

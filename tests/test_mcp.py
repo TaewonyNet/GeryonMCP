@@ -106,3 +106,14 @@ def test_mcp_not_found_handling(temp_db):
         get_doc_tool(doc_id="nonexistent_id")
     
     assert "not_found" in str(exc_info.value).lower()
+
+
+def test_reindex_tool_hidden_by_default(temp_db, monkeypatch):
+    """모델이 부르면 전체 모드 + prune(+full 이면 Safety Gate 우회)가 되는 도구 — 기본 비노출."""
+    monkeypatch.delenv("GERYON_MCP_REINDEX", raising=False)
+    names = {t.name for t in create_mcp_server(db_path=temp_db)._tool_manager.list_tools()}
+    assert "reindex" not in names and "search" in names
+
+    monkeypatch.setenv("GERYON_MCP_REINDEX", "1")
+    names = {t.name for t in create_mcp_server(db_path=temp_db)._tool_manager.list_tools()}
+    assert "reindex" in names

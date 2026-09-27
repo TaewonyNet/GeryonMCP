@@ -86,13 +86,40 @@ claude mcp get geryon
 ### 2-b. 전역 등록 (모든 프로젝트에서 항상 사용)
 
 ```bash
-claude mcp add geryon -- geryon serve
+claude mcp add -s user geryon -- "$(command -v geryon)" serve
 ```
+`-s user` 가 없으면 **현재 프로젝트에만** 등록됩니다. `geryon` 은 절대경로로 적으세요 —
+격리 venv 설치면 에디터/Claude 의 PATH 에 없어 서버가 조용히 안 뜹니다.
 
 특정 DB를 가리키려면:
 ```bash
-claude mcp add geryon -e GERYON_DB=/path/to/myproj.db -- geryon serve
+claude mcp add -s user geryon -e GERYON_DB=/path/to/myproj.db -- "$(command -v geryon)" serve
 ```
+
+### 2-b'. 세션이 여러 개면 — HTTP 서버 하나를 공유 (권장)
+
+stdio 등록은 **세션마다 서버 프로세스가 하나씩** 뜹니다. 검색 모델(rerank·임베딩)을 올린 서버는
+프로세스당 수 GB 라, 세션이 많으면 메모리가 세션 수만큼 곱해집니다. 이때는 서버 하나를 띄워 공유합니다.
+
+```bash
+geryon serve --transport http --port 8765          # 기본 127.0.0.1(로컬 전용)
+claude mcp add -s user --transport http geryon http://127.0.0.1:8765/mcp
+```
+상시 실행은 systemd 사용자 서비스로(§7 과 같은 방식):
+```ini
+# ~/.config/systemd/user/geryon-mcp.service
+[Service]
+ExecStart=/절대경로/geryon serve --transport http --host 127.0.0.1 --port 8765
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+[Install]
+WantedBy=default.target
+```
+```bash
+systemctl --user enable --now geryon-mcp
+loginctl enable-linger "$USER"   # 로그아웃·재부팅 뒤에도 유지
+```
+요청은 서버 안에서 차례로 처리됩니다(검색 1건 수백 ms). 색인 DB 갱신(`sync`/`watch`)은 재시작 없이 반영됩니다.
 
 ### 2-c. 동작 확인
 

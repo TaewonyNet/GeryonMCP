@@ -86,3 +86,16 @@ def test_list_spaces_failure_skips_check(tmp_path):
 def test_empty_expected_returns_empty(tmp_path):
     c = _StubClient(accessible=["A"])
     assert check_space_access(c, [], tmp_path) == []
+
+
+def test_register_mcp_writes_absolute_command(tmp_path, monkeypatch):
+    """이름만 적으면 PATH 에 venv 가 없는 에디터에서 서버가 안 뜬다 — 절대경로로 기록."""
+    import json
+    from geryon.cli import _register_mcp
+    monkeypatch.setattr("shutil.which", lambda _n: None)
+    monkeypatch.setattr(sys, "argv", ["geryon"])
+    monkeypatch.chdir(tmp_path)
+    _register_mcp(tmp_path, "geryon", tmp_path / "g.db")
+    cfg = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["geryon"]
+    assert cfg["command"].startswith("/") and cfg["args"][0].startswith("/")
+    assert cfg["args"][-1] == "serve"

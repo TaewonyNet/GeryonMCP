@@ -59,7 +59,12 @@ def _register_mcp(proj_dir, name: str, db_path) -> None:
     import json
     from pathlib import Path
     proj = Path(proj_dir or ".").resolve()
-    server_cfg = {"command": "geryon", "args": ["serve"], "env": {"GERYON_DB": str(db_path)}}
+    import os
+    # 이름만("geryon") 적으면 에디터/Claude 의 PATH 에 venv 가 없을 때 서버가 조용히 안 뜬다.
+    # 지금 실행 중인 geryon 의 절대경로를 기록한다.
+    prefix = [os.path.abspath(x) for x in _geryon_cmd_prefix()]
+    server_cfg = {"command": prefix[0], "args": [*prefix[1:], "serve"],
+                  "env": {"GERYON_DB": str(db_path)}}
     for rel in (".cursor/mcp.json", ".mcp.json"):
         cfg_path = proj / rel
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -532,7 +537,11 @@ def main() -> None:
     reindex_parser.add_argument("--full", action="store_true", help="Perform full reindex")
 
     # Serve subcommand
-    subparsers.add_parser("serve", help="Serve MCP server")
+    serve_parser = subparsers.add_parser("serve", help="Serve MCP server")
+    serve_parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
+                              help="stdio(기본, 세션마다 프로세스) | http(프로세스 하나를 여러 세션이 공유)")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="[http] 바인드 주소(기본 로컬 전용)")
+    serve_parser.add_argument("--port", type=int, default=8765, help="[http] 포트(기본 8765)")
 
     # Bootstrap subcommand
     subparsers.add_parser("bootstrap", help="Bootstrap Geryon environment")
@@ -800,7 +809,16 @@ def main() -> None:
     elif args.command == "serve":
         # MCP stdio 규약: stdout 은 프로토콜 전용 — 안내/로그는 반드시 stderr 로.
         print("Starting Geryon MCP server...", file=sys.stderr)
-        create_mcp_server().run()
+        app = create_mcp_server()
+        if args.transport == "http":
+            # 모델(rerank·임베딩)을 올린 서버는 프로세스당 수 GB 다. stdio 는 에디터/세션마다
+            # 한 벌씩 떠서 세션 수만큼 곱해지므로, 여러 세션이 쓰면 하나를 띄워 공유한다.
+            app.settings.host = args.host
+            app.settings.port = args.port
+            print(f"  http://{args.host}:{args.port}{app.settings.streamable_http_path}", file=sys.stderr)
+            app.run(transport="streamable-http")
+        else:
+            app.run()
     elif args.command == "demo":
         print("GeryonMCP 데모 — 가상 문서로 검색을 시연합니다(자격증명 불필요).")
         try:

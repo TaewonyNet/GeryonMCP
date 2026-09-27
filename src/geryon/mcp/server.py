@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Any
 from mcp.server.fastmcp import FastMCP
@@ -228,17 +229,21 @@ def create_mcp_server(db_path: str | Path | None = None) -> FastMCP:
 
         return json.dumps(results, ensure_ascii=False)
 
-    @app.tool()
-    def reindex(source: str | None = None, full: bool = False) -> str:
-        """Trigger the IngestionPipeline for a source."""
-        if source is not None and source.lower() != "confluence":
-            raise ValueError(f"Unsupported source: {source}")
+    # ⚠️ 기본 비노출. 모델이 호출하면 항상 전체 모드 + prune 이고 full=True 면 Safety Gate 까지
+    #    우회한다. 서버 안에서 동기로 돌아 수 시간 검색이 멈추고, sync 잠금도 거치지 않는다.
+    #    색인 갱신은 `geryon sync`/`watch` 로. 꼭 필요하면 GERYON_MCP_REINDEX=1.
+    if os.getenv("GERYON_MCP_REINDEX", "0") in ("1", "true", "True"):
+        @app.tool()
+        def reindex(source: str | None = None, full: bool = False) -> str:
+            """Trigger the IngestionPipeline for a source."""
+            if source is not None and source.lower() != "confluence":
+                raise ValueError(f"Unsupported source: {source}")
 
-        connector = ConfluenceConnector()
-        pipeline = IngestionPipeline(repository=repository, vector_store=vector_store, tree_store=tree_store)
-        stats = pipeline.run(connector, full_reindex=full)
+            connector = ConfluenceConnector()
+            pipeline = IngestionPipeline(repository=repository, vector_store=vector_store, tree_store=tree_store)
+            stats = pipeline.run(connector, full_reindex=full)
 
-        return json.dumps(stats, ensure_ascii=False)
+            return json.dumps(stats, ensure_ascii=False)
 
     @app.resource("geryon://documents/{doc_id}")
     def get_document_resource(doc_id: str) -> str:
