@@ -90,15 +90,17 @@ def test_repository_fts_sync_and_query(temp_db):
     conn = repo.get_connection()
     cursor = conn.cursor()
     
-    # Raw trigram query check
-    cursor.execute("SELECT doc_id FROM documents_fts WHERE documents_fts MATCH '할인율'")
+    # 검색이 실제로 읽는 FTS(documents_fts_norm)에 들어갔는지
+    from geryon.index.korean import normalize_korean
+    q = normalize_korean("할인율")
+    cursor.execute("SELECT doc_id FROM documents_fts_norm WHERE documents_fts_norm MATCH ?", (q,))
     results = cursor.fetchall()
     assert len(results) == 1
     assert results[0][0] == "doc2"
-    
-    # Check deletion also removes from FTS
+
+    # 삭제하면 검색 FTS 에서도 빠져야 한다(예전 delete() 는 _norm 을 지우지 않았다)
     repo.delete("doc2")
-    
-    cursor.execute("SELECT doc_id FROM documents_fts WHERE documents_fts MATCH '할인율'")
+
+    cursor.execute("SELECT doc_id FROM documents_fts_norm WHERE documents_fts_norm MATCH ?", (q,))
     results_after = cursor.fetchall()
     assert len(results_after) == 0

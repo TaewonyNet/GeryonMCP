@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from geryon.config import DB_PATH, ensure_directories
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 DDL_STATEMENTS = [
     """
@@ -79,43 +79,6 @@ DDL_STATEMENTS = [
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_document_tags_tag ON document_tags(tag);
-    """,
-    """
-    CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
-        doc_id,
-        title,
-        body_markdown,
-        tokenize='porter unicode61'
-    );
-    """,
-    # Synchronization triggers
-    """
-    CREATE TRIGGER IF NOT EXISTS trg_documents_insert AFTER INSERT ON documents
-    BEGIN
-        INSERT INTO documents_fts (doc_id, title, body_markdown)
-        VALUES (new.doc_id, new.title, new.body_markdown);
-    END;
-    """,
-    """
-    -- ⚠️ WHEN 가드 필수. 없으면 `static_score` 같은 «본문과 무관한» 컬럼만 바꿔도
-    --    FTS 본문이 통째로 재색인된다. 실측(2026-09-20): 수만 행 점수 갱신이
-    --    10분을 넘겼고, 계측 결과 그 시간이 전부 이 트리거였다(앞단은 1초 미만).
-    --    같은 정의가 _V9_DDL 에도 있다(기존 DB 교체용) — 고칠 때 둘 다 고칠 것.
-    CREATE TRIGGER IF NOT EXISTS trg_documents_update AFTER UPDATE ON documents
-        WHEN new.title IS NOT old.title
-          OR new.body_markdown IS NOT old.body_markdown
-        BEGIN
-            UPDATE documents_fts
-            SET title = new.title,
-                body_markdown = new.body_markdown
-            WHERE doc_id = new.doc_id;
-        END;
-    """,
-    """
-    CREATE TRIGGER IF NOT EXISTS trg_documents_delete AFTER DELETE ON documents
-    BEGIN
-        DELETE FROM documents_fts WHERE doc_id = old.doc_id;
-    END;
     """,
     """
     CREATE TABLE IF NOT EXISTS chunks (
@@ -255,21 +218,23 @@ _V8_DDL = [
 #    계측 결과 재계산 600초 중 **앞단 전부가 1초 미만, 나머지 전부가 이 트리거**였다.
 #    제목·본문이 실제로 바뀐 경우에만 FTS 를 건드리게 한다.
 #
-# ⚠️ 트리거는 `IF NOT EXISTS` 로는 교체되지 않는다. DROP 후 재생성해야 한다.
+# (②의 트리거는 v10 에서 테이블째 제거됐다 — 아래 참고.)
 _V9_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_documents_source_id ON documents(source_id);",
+]
+
+# v10: 쓰이지 않는 FTS(`documents_fts`)와 동기화 트리거 3개 제거.
+#
+# 검색(keyword·advanced)은 v7 부터 조사 정규화 FTS(`documents_fts_norm`)만 읽는다 — v1.0.0 이후
+# `db.py` 밖에서 `documents_fts` 를 읽는 코드는 0곳. 그런데 트리거가 문서를 쓸 때마다 이 테이블도
+# 다시 써서 ① 색인 시간(v9 의 「점수만 바꿔도 10분」이 이 트리거), ② 용량(실물 인덱스의 약 20%)을
+# 쓰고, ③ `INSERT OR REPLACE` 의 암묵 삭제에는 삭제 트리거가 돌지 않아 갱신마다 옛 본문이 쌓였다.
+# 되돌림: 옛 버전은 이 테이블을 읽지 않고, 기존 DB 에 기본 DDL 을 다시 돌리지 않으므로 재생성되지 않는다.
+_V10_DDL = [
+    "DROP TRIGGER IF EXISTS trg_documents_insert;",
     "DROP TRIGGER IF EXISTS trg_documents_update;",
-    """
-    CREATE TRIGGER trg_documents_update AFTER UPDATE ON documents
-        WHEN new.title IS NOT old.title
-          OR new.body_markdown IS NOT old.body_markdown
-        BEGIN
-            UPDATE documents_fts
-            SET title = new.title,
-                body_markdown = new.body_markdown
-            WHERE doc_id = new.doc_id;
-        END;
-    """,
+    "DROP TRIGGER IF EXISTS trg_documents_delete;",
+    "DROP TABLE IF EXISTS documents_fts;",
 ]
 
 DDL_STATEMENTS = DDL_STATEMENTS + _V4_DDL + _V5_DDL + _V6_DDL + _V7_DDL + _V8_DDL + _V9_DDL
@@ -281,6 +246,7 @@ MIGRATIONS: dict[int, list[str]] = {
     6: _V6_DDL,
     7: _V7_DDL,
     8: _V8_DDL,
+    10: _V10_DDL,
     # ⚠️ v9 는 여기 두지 않는다. 문장이 전부 `documents` 를 참조하는데, 아주 옛
     #    버전(v3 이하)에서 올라오는 DB 는 그 시점에 `documents` 가 없을 수 있다
     #    (`tests/test_db.py::test_migration_v3_to_latest` 가 그 경우를 모사한다).
@@ -310,27 +276,10 @@ def _apply_migrations(conn: sqlite3.Connection, from_version: int, to_version: i
                 _ = conn.execute(
                     "ALTER TABLE documents ADD COLUMN static_score REAL NOT NULL DEFAULT 0.0;"
                 )
-        # v6: documents_fts 토크나이저 교체(trigram→porter unicode61) — FTS 재구축.
-        # 트리거는 테이블명을 참조하므로 DROP/CREATE 후에도 유효. 재임베딩 불필요.
+        # v6: (옛) documents_fts 토크나이저 교체. 그 테이블은 v10 에서 제거되므로 재구축하지 않고 지운다.
         if v == 6:
-            docs_exists = conn.execute(
-                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='documents'"
-            ).fetchone()[0]
             _ = conn.execute("DROP TABLE IF EXISTS documents_fts;")
-            _ = conn.execute(
-                """
-                CREATE VIRTUAL TABLE documents_fts USING fts5(
-                    doc_id, title, body_markdown, tokenize='porter unicode61'
-                );
-                """
-            )
-            if docs_exists:
-                _ = conn.execute(
-                    "INSERT INTO documents_fts (doc_id, title, body_markdown) "
-                    "SELECT doc_id, title, body_markdown FROM documents;"
-                )
-        # v9: documents(source_id) 색인 + trg_documents_update 의 WHEN 가드.
-        #     둘 다 `documents` 를 참조하므로 테이블이 있을 때만 적용한다.
+        # v9: documents(source_id) 색인. `documents` 를 참조하므로 테이블이 있을 때만 적용한다.
         if v == 9:
             docs_exists = conn.execute(
                 "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='documents'"
@@ -338,6 +287,18 @@ def _apply_migrations(conn: sqlite3.Connection, from_version: int, to_version: i
             if docs_exists:
                 for stmt in _V9_DDL:
                     _ = conn.execute(stmt)
+        # v10: 삭제된 문서가 남긴 `documents_fts_norm` 행 정리(예전 delete() 가 지우지 않았다).
+        if v == 10:
+            docs_exists = conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='documents'"
+            ).fetchone()[0]
+            norm_exists = conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE name='documents_fts_norm'"
+            ).fetchone()[0]
+            if docs_exists and norm_exists:
+                _ = conn.execute(
+                    "DELETE FROM documents_fts_norm WHERE doc_id NOT IN (SELECT doc_id FROM documents);"
+                )
         # v7: 조사 정규화 FTS 백필 — 기존 documents를 normalize 해 documents_fts_norm 채움(재임베딩 불필요).
         if v == 7:
             docs_exists = conn.execute(

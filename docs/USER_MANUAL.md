@@ -144,7 +144,7 @@ geryon sync --source confluence --all   # 날짜 제한 없이 전체
 | `get_related` | 연관 문서 | "이거랑 관련된 문서" |
 | `browse` | 공간/계층 목록 | "ENG 공간 목록" |
 | `list_sources` | 색인된 소스/공간 목록 | "어떤 공간이 색인돼 있어?" |
-| `reindex` | 재색인 트리거 | "최신 변경 반영해줘" |
+| `reindex` | 재색인 트리거 — **기본 비노출**(`GERYON_MCP_REINDEX=1`) | 대신 `geryon sync`/`watch` 로 갱신 |
 
 `advanced_search`는 제목·작성자·공간·태그·날짜를 **독립 필드로 결합**하며, 본문 없이 메타만으로도(작성자=X 전체) 검색합니다. 같은 검색을 **CLI로** 쓰려면 `geryon search "<질의>"`(§6.1) — MCP 도구와 동일 결과입니다.
 

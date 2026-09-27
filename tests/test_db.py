@@ -96,16 +96,44 @@ def test_v9_source_id_색인이_생기고_UPDATE가_스캔하지_않는다(tmp_p
     conn.close()
 
 
-def test_v9_트리거는_본문이_안_바뀌면_FTS를_건드리지_않는다(tmp_path):
-    """`static_score` 만 바꿨는데 FTS 본문이 재색인되던 것을 막는다.
+# ═══════════════════════════════════ v10 — 쓰이지 않는 FTS(documents_fts) 제거
 
-    계측(2026-09-20): 수만 행 점수 갱신이 10분 초과, 그 시간이 전부 이 트리거.
-    """
-    conn = init_db(tmp_path / "v9b.db")
-    sql = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE name='trg_documents_update'"
-    ).fetchone()[0]
-    assert "WHEN" in sql, "trg_documents_update 에 WHEN 가드가 없다"
+def _objects(conn):
+    return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table','trigger')")}
+
+
+def test_v10_신규_DB에는_documents_fts와_트리거가_없다(tmp_path):
+    conn = init_db(tmp_path / "v10a.db")
+    o = _objects(conn)
+    assert "documents_fts" not in o
+    assert not {"trg_documents_insert", "trg_documents_update", "trg_documents_delete"} & o
+    assert "documents_fts_norm" in o          # 검색이 실제로 쓰는 FTS 는 그대로
+    conn.close()
+
+
+def test_v10_업그레이드가_documents_fts를_지우고_검색_데이터는_남긴다(tmp_path):
+    """v9 DB(옛 FTS·트리거·삭제 문서가 남긴 _norm 행 포함) → 최신."""
+    from geryon.store.db import _apply_migrations
+    db = tmp_path / "v9.db"
+    conn = init_db(db)
+    conn.execute("CREATE VIRTUAL TABLE documents_fts USING fts5(doc_id, title, body_markdown)")
+    conn.execute("CREATE TRIGGER trg_documents_insert AFTER INSERT ON documents BEGIN "
+                 "INSERT INTO documents_fts VALUES (new.doc_id, new.title, new.body_markdown); END;")
+    conn.execute("INSERT INTO documents (doc_id, source, source_id, title, body_markdown, tags, hierarchy, "
+                 "content_hash, ingested_at, raw_meta) "
+                 "VALUES ('d1','confluence','1','t','b','[]','[]','h',datetime('now'),'{}')")
+    conn.execute("INSERT INTO documents_fts_norm VALUES ('d1','t','b')")
+    conn.execute("INSERT INTO documents_fts_norm VALUES ('gone','t','b')")   # 삭제된 문서의 흔적
+    conn.execute("DELETE FROM schema_version WHERE version >= 10")
+    conn.commit()
+    conn.close()
+
+    conn = init_db(db)
+    o = _objects(conn)
+    assert "documents_fts" not in o and "trg_documents_insert" not in o
+    assert conn.execute("SELECT count(*) FROM documents").fetchone()[0] == 1
+    assert [r[0] for r in conn.execute("SELECT doc_id FROM documents_fts_norm")] == ["d1"]
+    assert conn.execute("SELECT max(version) FROM schema_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 
 

@@ -54,7 +54,9 @@ GeryonMCP를 각 AI 에디터·클라이언트에 연결하는 방법입니다.
 }
 ```
 
-**제공 도구** (`search` · `advanced_search` · `get_related` · `get_document` · `browse` · `list_sources` · `reindex`)
+**제공 도구** (`search` · `advanced_search` · `get_related` · `get_document` · `browse` · `list_sources`)
+— `reindex` 는 기본 비노출(`GERYON_MCP_REINDEX=1` 로 켬). 모델이 호출하면 전체 재색인·삭제가 서버 안에서
+동기로 돌아 검색이 멈출 수 있다. 색인 갱신은 `geryon sync`/`watch` 로.
 
 ---
 
@@ -349,7 +351,7 @@ geryon watch --since 2026-01-01 --until 2026-06-30
   다음 싱크: 10:10:00 (약 10분 후) — Ctrl+C 로 중단
 ```
 
-> `--full` 은 watch 에서 거부됩니다(매 주기 전체 재색인·삭제 가드 우회). 전체 재구축은 `geryon sync --full` 로 한 번만.
+> watch 의 `--full` 은 경고 후 **무시**되고 증분으로 돕니다(매 주기 전체 재색인·삭제 가드 우회는 위험). 전체 재구축은 `geryon sync --full` 로 한 번만.
 > 같은 DB 를 갱신하는 sync 는 한 번에 하나만 돕니다(`<DB>.sync.lock`) — cron 과 watch 를 같이 써도 겹치지 않고 차례를 기다립니다.
 
 ### 설정 파일 위치 — 데몬은 실행 폴더가 다르다

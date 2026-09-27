@@ -106,7 +106,7 @@ geryon serve                 # MCP 서버 기동
 | `get_related` | 연관 문서(링크 기반) |
 | `browse` | 공간/계층 목록 |
 | `list_sources` | 색인된 소스/공간 목록 |
-| `reindex` | 재색인 트리거 |
+| `reindex` | 재색인 트리거 — **기본 비노출**(`GERYON_MCP_REINDEX=1` 로 켬). 색인 갱신은 `geryon sync`/`watch` 권장 |
 
 > 같은 검색을 터미널에서 직접: `geryon search "<질의>"`(표/`--json`) — MCP 도구와 동일 코어.
 

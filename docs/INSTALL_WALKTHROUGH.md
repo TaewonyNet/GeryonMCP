@@ -77,7 +77,8 @@ geryon health              # "System healthy."
 - **팀 공유 DB**: `"env": { "GERYON_DB": "/path/to/shared/geryon.db" }` 추가.
 
 저장 후 클라이언트를 재시작하면 도구가 나타납니다. 제공 도구:
-`search` · `advanced_search` · `get_related` · `get_document` · `browse` · `list_sources` · `reindex`
+`search` · `advanced_search` · `get_related` · `get_document` · `browse` · `list_sources`
+(`reindex` 는 기본 비노출 — 모델이 부르면 전체 재색인·삭제가 돌 수 있어 `GERYON_MCP_REINDEX=1` 일 때만 노출)
 
 **Claude Code, Cursor, Claude Desktop, VS Code, Zed별 상세 설정 및 자동 싱크 데몬 연동 방법:**
 → **[MCP_INSTALL.md](MCP_INSTALL.md)**

@@ -191,3 +191,43 @@ def test_manifest_가_변경없음이면_empty_source_경보를_내지_않는다
                    last_change={"since": None, "added": ["SP/gone"], "modified": [], "deleted": []})
     s = pipe.run(conn, incremental=True)                   # 바뀌었다는데 못 읽음 → 경보 유지
     assert s.get("empty_source") is True
+
+
+def test_업그레이드_후_기존_NULL_날짜는_full_no_prune_no_vector_로_채워진다(tmp_path):
+    """CHANGELOG 의 업그레이드 안내(`ingest --source jira --full --no-prune --no-vector`)를 고정한다.
+
+    날짜는 content_hash 에 안 들어가 증분은 옛 문서를 «변경 없음»으로 건너뛴다 → 파서를 고쳐도
+    기존 DB 의 NULL 날짜는 그대로다. 강제 재정규화(--full)로 채우되 삭제(--no-prune)와
+    재임베딩(--no-vector)은 하지 않아야 한다 — 기존 청크(임베딩)가 남아 있어야 한다.
+    """
+    from geryon.domain.models import RawRecord, SourceType
+
+    class _Jira:
+        source_type = SourceType.JIRA
+        supports_incremental = True
+        db_path = None
+        def healthcheck(self): return True
+        def iter_raw(self, only=None):
+            yield RawRecord(source=SourceType.JIRA, source_id="K-1", raw_body="본문",
+                            raw_format="markdown", title="이슈", url=None, space_or_repo="K",
+                            metadata={"created_at": "2023-12-11T10:17:37.790+0900",
+                                      "updated_at": "2023-12-11T10:21:29.590+0900"})
+
+    repo = SqliteRepository(str(tmp_path / "up.db"))
+    IngestionPipeline(repository=repo).run(_Jira(), full_reindex=True)
+    conn = repo.get_connection()
+    doc_id = conn.execute("SELECT doc_id FROM documents").fetchone()[0]
+    # 옛 버전 상태 재현: 날짜 NULL + 기존 임베딩 청크 존재
+    conn.execute("UPDATE documents SET created_at=NULL, updated_at=NULL")
+    conn.execute("INSERT INTO chunks (chunk_id, doc_id, ordinal, text) VALUES ('c1', ?, 0, 't')", (doc_id,))
+    conn.commit()
+
+    s = IngestionPipeline(repository=repo).run(_Jira(), incremental=True)   # 평소 싱크
+    assert s["skipped"] == 1
+    assert conn.execute("SELECT created_at FROM documents").fetchone()[0] is None   # 안 고쳐짐
+
+    s = IngestionPipeline(repository=repo, vector_store=None).run(          # 안내한 명령과 동일
+        _Jira(), full_reindex=True, prune=False, incremental=False)
+    assert s["deleted"] == 0
+    assert conn.execute("SELECT created_at FROM documents").fetchone()[0] is not None
+    assert conn.execute("SELECT count(*) FROM chunks WHERE doc_id=?", (doc_id,)).fetchone()[0] == 1

@@ -140,6 +140,19 @@ def _reject_shared_bronze_dir(args, multi_source: bool) -> None:
         sys.exit(2)
 
 
+def _drop_watch_full(args) -> None:
+    """watch 의 `--full` 은 경고 후 무시하고 증분으로 돈다.
+
+    매 주기 강제 재색인 + Safety Gate 우회 + prune 이 되어 증분 수집 창과 겹치면 대량 삭제로
+    이어진다. 그렇다고 오류로 끝내면, 예전 문서대로 `watch --full` 을 등록한 서비스가
+    `Restart=on-failure` 로 재시작만 반복하며 싱크가 멈춘다.
+    """
+    if getattr(args, "full", False):
+        print("[geryon watch] ⚠ --full 은 무시하고 증분으로 돕니다(매 주기 전체 재색인·삭제 가드 우회는 "
+              "위험). 전체 재구축은 한 번만: geryon sync --full", file=sys.stderr)
+        args.full = False
+
+
 def _warn_access_lost(stats: dict) -> None:
     """acquire 결과에 접근 불가 스페이스가 있으면 눈에 띄는 경고 배너 출력."""
     n = (stats or {}).get("access_lost", 0)
@@ -673,11 +686,7 @@ def main() -> None:
 
         source = args.source  # None = 전체(confluence+git+jira) — sync 의 멀티소스 경로 상속
         _reject_shared_bronze_dir(args, multi_source=source is None)
-        if getattr(args, "full", False):
-            # 매 주기 강제 재색인 + Safety Gate 우회 + prune 이 된다. 증분 수집 창과 겹치면 대량 삭제.
-            print("Error: watch 에는 --full 을 쓸 수 없습니다(매 주기 전체 재색인·삭제 가드 우회).\n"
-                  "       전체 재구축은 한 번만: geryon sync --full", file=sys.stderr)
-            sys.exit(2)
+        _drop_watch_full(args)
         source_label = source or "전체(confluence+git+jira)"
         # 데몬 출력은 파일·journal 로 간다 — 파이프면 파이썬이 stdout 을 블록 버퍼링해
         # 진행 로그가 종료 때까지 안 보인다. 자식 sync 도 같은 이유로 버퍼링을 끈다.

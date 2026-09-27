@@ -269,6 +269,8 @@ class SqliteRepository(Repository):
             # Delete attachments and document_tags first
             _ = cursor.execute("DELETE FROM attachments WHERE doc_id = ?;", (doc_id,))
             _ = cursor.execute("DELETE FROM document_tags WHERE doc_id = ?;", (doc_id,))
+            # 검색 FTS 는 트리거 없이 upsert 가 직접 관리한다 — 삭제도 직접 해야 검색에 남지 않는다.
+            _ = cursor.execute("DELETE FROM documents_fts_norm WHERE doc_id = ?;", (doc_id,))
             _ = cursor.execute("DELETE FROM documents WHERE doc_id = ?;", (doc_id,))
             conn.commit()
         except Exception as e:

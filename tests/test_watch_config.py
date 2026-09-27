@@ -44,9 +44,27 @@ def _run_cli(monkeypatch, *argv):
     return e.value.code
 
 
-def test_watch_rejects_full(monkeypatch, capsys):
-    assert _run_cli(monkeypatch, "watch", "--source", "confluence", "--full") == 2
-    assert "--full" in capsys.readouterr().err
+def test_watch_ignores_full_and_keeps_syncing(monkeypatch, capsys):
+    """예전 문서의 `watch --full` 서비스가 오류 종료 → 재시작 루프에 빠지지 않고 증분으로 돈다."""
+    import subprocess
+
+    class _Stop(Exception):
+        pass
+
+    seen = []
+
+    def fake_run(cmd, **kw):
+        seen.append(cmd)
+        raise _Stop   # 첫 주기의 sync 호출까지만 본다
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setenv("PYTHONUNBUFFERED", "x")   # watch 가 설정하는 값을 테스트 뒤 원상 복구
+    monkeypatch.delenv("PYTHONUNBUFFERED")
+    monkeypatch.setattr(sys, "argv", ["geryon", "watch", "--source", "confluence", "--full"])
+    with pytest.raises(_Stop):
+        cli.main()
+    assert seen and seen[0][-3:] == ["sync", "--source", "confluence"]   # --full 없이 sync
+    assert "--full 은 무시" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("cmd", ["watch", "sync"])

@@ -5,6 +5,7 @@
 """
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -82,8 +83,27 @@ def test_legacy_cwd_bronze_used_with_warning(clean, tmp_path, monkeypatch, capsy
     assert config.default_bronze("confluence") == str(work / "bronze" / "confluence")
     assert "예전 기본 위치" in capsys.readouterr().err
 
-    (clean / "bronze" / "confluence").mkdir(parents=True)  # 새 기본이 생기면 그쪽
-    assert config.default_bronze("confluence") == str(clean / "bronze" / "confluence")
+
+def test_legacy_choice_does_not_depend_on_new_location_existing(clean, tmp_path, monkeypatch, capsys):
+    """다른 폴더에서 한 번 실행해 새 위치가 생겨도, 예전 폴더에서의 결과는 바뀌지 않아야 한다.
+
+    예전 구현은 «새 위치가 없을 때만» 예전 폴더를 써서, 새 위치가 생기는 순간 같은 폴더·같은
+    명령이 조용히 빈 새 위치로 바뀌었다(이전 버전보다 나쁜 퇴행).
+    """
+    proj, other = tmp_path / "proj", tmp_path / "other"
+    (proj / "bronze" / "confluence").mkdir(parents=True)
+    other.mkdir()
+
+    monkeypatch.chdir(proj)
+    before = config.default_bronze("confluence")
+    monkeypatch.chdir(other)
+    Path(config.default_bronze("confluence")).mkdir(parents=True)   # 다른 폴더의 수집이 새 위치를 만듦
+    monkeypatch.chdir(proj)
+    capsys.readouterr()
+    config._legacy_warned.clear()
+
+    assert config.default_bronze("confluence") == before == str(proj / "bronze" / "confluence")
+    assert "두 곳으로 갈라져" in capsys.readouterr().err
 
 
 def test_components_follow_the_setting(clean, tmp_path, monkeypatch):

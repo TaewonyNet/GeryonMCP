@@ -7,6 +7,60 @@
 
 ## [Unreleased] — 1.3.0 목표
 
+### ⚠️ 업그레이드 안내 — 기존 DB 에서 자동으로 고쳐지지 않는 것
+코드를 올려도 **이미 저장된 데이터**는 그대로다. 해당되면 한 번씩 실행한다.
+
+1. **Jira 날짜가 비어 있다**(아래 날짜 파싱 수정 이전에 색인한 경우 — Jira 문서 전건).
+   날짜는 문서 변경 판정(content_hash)에 들어가지 않아, 평소 싱크(증분)는 옛 문서를 건너뛴다.
+   ```bash
+   geryon ingest --source jira --full --no-prune --no-vector
+   ```
+   `--full` 로 다시 정규화해 날짜를 채우되, `--no-prune`(삭제 없음)·`--no-vector`(재임베딩 없음, 기존
+   임베딩 유지)로 부작용을 막는다. 회귀 시험 `test_업그레이드_후_기존_NULL_날짜는_…`.
+   저장소를 받아 쓰는 경우 대안: `python scripts/backfill_dates.py --apply --recalc-static`
+   (원본 메타에서 날짜만 채움, 재정규화 없음 — pip 패키지에는 포함되지 않음).
+2. **문서 간 링크(page_links)가 비어 있다**(예전에 원천 하나만 `--full` 재색인한 적이 있으면 다른
+   원천의 링크가 전부 지워졌다 — 아래 page_links 수정). 확인:
+   ```bash
+   python -c "import sqlite3,os;print(sqlite3.connect(os.path.expanduser('~/.geryon/geryon.db')).execute('select count(*) from page_links').fetchone()[0])"
+   ```
+   0 이면 `geryon ingest --source confluence --full --no-prune --no-vector`. 링크는 **Bronze 에 있는
+   페이지 원문**에서 다시 뽑으므로, Bronze 가 일부만 있으면 링크도 일부만 복구된다.
+3. **스키마 v9·v10** 은 새 버전으로 DB 를 처음 열 때 자동 적용된다(수만 문서에서 약 1초).
+   옛 버전으로 되돌려 열어도 동작한다(버전이 더 높으면 마이그레이션을 건너뜀).
+4. **(선택) 용량 회수** — v10 이 지운 FTS 공간은 파일 안의 빈 공간으로 남아 재사용된다. 파일 크기까지
+   줄이려면 검색 서버·싱크를 멈춘 상태에서 한 번:
+   ```bash
+   python -c "import sqlite3,os;sqlite3.connect(os.path.expanduser('~/.geryon/geryon.db')).execute('VACUUM')"
+   ```
+   (실측: 파일 약 30% 감소, 수만 문서 기준 HDD 1분 내외. 진행 중 DB 크기만큼 여유 공간이 더 필요하다.)
+
+### Removed — 쓰이지 않는 FTS `documents_fts` 와 동기화 트리거 3개 (스키마 v10)
+검색(keyword·advanced)은 v7 부터 조사 정규화 FTS `documents_fts_norm` 만 읽는다. v1.0.0 이후
+`documents_fts` 를 읽는 코드는 한 곳도 없었는데, 트리거가 문서를 쓸 때마다 이 테이블도 다시 썼다.
+- 비용: 실물 인덱스 용량의 약 20%, 색인 시간(v9 의 「점수만 바꿔도 10분」 트리거가 이 테이블).
+- 결함: `INSERT OR REPLACE` 의 암묵 삭제에는 삭제 트리거가 돌지 않아, 문서가 갱신될 때마다 옛 본문이
+  이 테이블에 쌓였다(검색에는 안 쓰여 결과엔 영향 없음).
+- 검증: 실물 인덱스 복사본 두 벌에 변경 전·후 코드로 같은 질의 42개 → 상위 10개가 순서까지 42/42 동일.
+- 함께 고침: `repository.delete()` 가 검색 FTS(`documents_fts_norm`)에서는 지우지 않아, 삭제된 문서의
+  색인이 남았다. 이제 함께 지우고, v10 마이그레이션이 남아 있던 흔적도 정리한다.
+
+### Fixed — 날짜·링크·색인 갱신 결함 (스키마 v9)
+- **Jira 날짜 전멸**: `parse_iso8601` 이 콜론 없는 오프셋(`+0900`)을 못 읽어, Jira 문서의
+  created/updated 가 전부 NULL 이었다. 예외를 삼키는 구조라 ingest 는 `errors 0` 으로 성공 보고했다.
+  날짜가 없으면 recency 가 중립값으로 채워져 static_score(랭킹 부스트)도 틀어진다.
+- **날짜 파싱 실패가 무음**: ingest 출력에 `date_seen`·`date_parsed`·`date_parse_rate` 를 항상 넣는다.
+- **0건 색인을 성공으로 보고**: `records_seen`·`empty_source` 추가(Bronze 경로가 비었을 때 드러남).
+- **page_links 가 원천 간에 지워짐**: 저장이 테이블 전체를 비우고 이번 실행분만 넣어, 원천 하나를
+  `--full` 재색인하면 다른 원천의 링크가 사라졌다 → 이번 실행이 소유한 문서의 링크만 교체.
+  backlink 집계도 이번 실행분이 아니라 저장된 그래프 전체로(`backlink_counts()`).
+- **스키마 v9 — 색인 갱신 비용**: ① `documents(source_id)` 색인이 없어 static_score 갱신이 문서마다
+  전체 스캔(O(N²))이었다. ② 갱신 트리거에 조건이 없어 점수만 바꿔도 FTS 본문을 다시 썼다 →
+  제목·본문이 바뀔 때만.
+- `scripts/ab_significance.py`: 불일치쌍 수 `n_d` 와 가능한 최소 p 를 표기하고, α 를 만족할 수 없으면
+  「효과 없음」이 아니라 **「검정 불가」** 로 판정(α=0.05 는 불일치쌍 6개 이상부터 판정 가능).
+- `scripts/backfill_dates.py`(신규): 원본 메타(raw_meta)에서 비어 있는 날짜만 채우고 static_score 재계산.
+
 ### Changed — Bronze 기본 위치 `./bronze` → `~/.geryon/bronze` (실행 폴더 무관)
 예전 기본값은 **명령을 실행한 폴더(CWD)** 의 `bronze/` 였다. 실행 위치마다 Bronze 가 따로
 생겨 DB 하나에 여러 Bronze 가 섞였고, 옛 폴더로 재색인하면 최신 문서가 옛 버전으로 되돌아갔다.
@@ -16,8 +70,10 @@
 - `.env` 의 상대경로는 **그 `.env` 파일 위치 기준**으로 푼다(CWD 기준 아님).
 - **옮기기**: 폴더를 통째로 옮기고 경로 설정만 바꾸면 증분 싱크가 이어진다(DB 는 Bronze 안의
   상대경로만 저장). 회귀 시험 `tests/test_bronze_paths.py`.
-- **업그레이드**: 설정이 없고 새 위치가 비어 있는데 실행 폴더에 예전 `bronze/<소스>` 가 있으면
-  경고와 함께 그 폴더를 계속 쓴다. `mv ./bronze ~/.geryon/bronze` 또는 `GERYON_BRONZE_DIR` 지정으로 해소.
+- **업그레이드**: 경로 설정이 없고 실행 폴더에 예전 `bronze/<소스>` 가 있으면 **항상** 경고와 함께
+  그 폴더를 계속 쓴다(새 위치의 존재 여부와 무관 — 같은 폴더·같은 명령이면 결과가 같다). 새 위치에도
+  Bronze 가 있으면 「두 곳으로 갈라짐」을 함께 경고한다. `mv ./bronze ~/.geryon/bronze` 또는
+  `GERYON_BRONZE_DIR` 지정으로 해소.
 - 수집기·커넥터에 흩어져 있던 하드코딩 기본값(`"bronze/…"`)을 모두 `config.default_bronze()` 로 통일.
 
 ### Added — `geryon serve --transport http` (서버 하나를 여러 세션이 공유)
@@ -37,8 +93,9 @@ stdio 는 세션마다 서버 프로세스가 뜬다. 모델을 올린 서버는
 ### Fixed — watch 를 데몬으로 돌릴 때의 결함
 - **설정 파일**: `./.env` 만 읽어 systemd·cron(실행 폴더가 홈) 에서는 자격증명·스페이스를 통째로 잃었다.
   이제 `./.env` → `~/.geryon/.env` 순으로 읽는다(앞이 우선, OS 환경변수 최우선).
-- **`watch --full` 거부**: 매 주기 강제 재색인 + Safety Gate 우회 + prune 이 되어, 증분 수집 창과
-  겹치면 대량 삭제로 이어진다. 전체 재구축은 `geryon sync --full` 로 한 번만.
+- **`watch --full` 무시(경고)**: 매 주기 강제 재색인 + Safety Gate 우회 + prune 이 되어, 증분 수집 창과
+  겹치면 대량 삭제로 이어진다. 오류로 끝내지 않는 이유 — 예전 문서대로 `watch --full` 을 등록한
+  서비스가 `Restart=on-failure` 로 재시작만 반복하며 싱크가 멈추기 때문. 전체 재구축은 `geryon sync --full` 로 한 번만.
 - **동시 실행 직렬화**: 같은 DB 를 갱신하는 `sync` 는 한 번에 하나(`<DB>.sync.lock`, 대기). cron 과
   watch 가 겹치면 manifest(증분 기준)를 서로 덮어 변경분을 잃을 수 있었다.
 - **`--bronze-dir` 는 `--source` 와 함께**: 소스 미지정(전체)에 쓰면 세 소스가 한 폴더에 섞였다.

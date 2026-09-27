@@ -61,8 +61,10 @@ CONFIG_PATH = GERYON_DIR / "config.yaml"
 #    `bronze/`)은 실행 위치마다 Bronze 가 따로 생겨, DB 하나에 여러 Bronze 가 섞이고
 #    옛 폴더로 재색인하면 최신 문서가 옛 버전으로 되돌아갔다(실제 발생).
 #
-# 우선순위: 소스별 env > GERYON_BRONZE_DIR/<sub> > ~/.geryon/bronze/<sub>
-#          (설정이 전혀 없고 새 기본이 비었는데 CWD 에 예전 `bronze/<sub>` 가 있으면 그것 + 경고)
+# 우선순위: 소스별 env > GERYON_BRONZE_DIR/<sub> > CWD 의 예전 `bronze/<sub>`(있으면, 경고)
+#          > ~/.geryon/bronze/<sub>
+# ⚠️ 예전 폴더를 쓸지는 «새 위치가 이미 있느냐»로 정하지 않는다. 그러면 다른 폴더에서 한 번
+#    실행해 새 위치가 생기는 순간, 같은 폴더·같은 명령인데 조용히 빈 새 위치로 바뀐다.
 # DB 는 Bronze 안의 상대경로만 저장하므로(`attachments/…`) 폴더를 통째로 옮기고
 # 경로 설정만 바꾸면 증분 싱크가 그대로 이어진다.
 _BRONZE_SUBDIR = {"confluence": "confluence", "jira": "jira", "git": "repos"}
@@ -98,12 +100,15 @@ def default_bronze(source: str) -> str:
         return str(base / sub)
     new = GERYON_DIR / "bronze" / sub
     legacy = Path.cwd() / "bronze" / sub
-    if not new.exists() and legacy.is_dir():
+    if legacy.is_dir():
         if source not in _legacy_warned:
             _legacy_warned.add(source)
             print(f"[geryon] ⚠ 예전 기본 위치의 Bronze 를 사용합니다: {legacy}\n"
                   f"          기본 위치가 {new} 로 바뀌었습니다. 폴더를 옮기거나 "
                   f"GERYON_BRONZE_DIR 를 지정하세요.", file=sys.stderr)
+            if new.is_dir():
+                print(f"[geryon] ⚠ 새 위치에도 Bronze 가 있습니다({new}) — 두 곳으로 갈라져 있습니다. "
+                      f"`--full` 전에 하나로 합치세요.", file=sys.stderr)
         return str(legacy)
     return str(new)
 

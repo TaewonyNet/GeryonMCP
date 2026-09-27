@@ -33,7 +33,7 @@ def _doc(i, title):
 def _retriever(path):
     repo = SqliteRepository(path)
     vs = VectorStore(db_path=path)
-    # rerank 경로는 키워드(FTS)만 필요 — upsert 시 트리거가 documents_fts 채움.
+    # rerank 경로는 키워드(FTS)만 필요 — upsert 가 documents_fts_norm 을 채운다.
     for i, t in enumerate(["배포 가이드 문서", "배포 운영 런북", "배포 회의록"], 1):
         repo.upsert(_doc(i, t))
     return HybridRetriever(repository=repo, vector_store=vs)
