@@ -29,7 +29,7 @@
 
 | 이름 | 무엇 | 비유 | 어디에 |
 |---|---|---|---|
-| **Bronze** | 받은 원본 그대로 | 장 봐온 식재료 | 디스크 파일 `bronze/confluence/` |
+| **Bronze** | 받은 원본 그대로 | 장 봐온 식재료 | 디스크 파일 `~/.geryon/bronze/confluence/` |
 | **Silver** | 검색용으로 가공한 것 | 손질해 정리한 재료 | SQLite DB `~/.geryon/geryon.db` |
 | **Gold** | 사용자 맞춤 정보(동의어 등) | 내 입맛 메모 | `~/.geryon/gold/` |
 
@@ -69,7 +69,7 @@
 ## 3. 데이터가 흐르는 길 (단계별 + 코드)
 
 ### ① 수집 — `src/geryon/acquire/confluence_atlassian.py`
-- Confluence REST API를 호출해 페이지를 받아 `bronze/confluence/{공간}/{페이지ID}/` 에 저장합니다.
+- Confluence REST API를 호출해 페이지를 받아 `~/.geryon/bronze/confluence/{공간}/{페이지ID}/` 에 저장합니다.
   - `content.html` (본문 원본), `meta.json` (제목·작성자·태그 등), `attachments/` (첨부)
 - **멱등성**: 이미 받은 페이지는 버전을 비교해 **변경된 것만** 다시 받습니다(매번 전체를 안 받음).
 
@@ -146,7 +146,7 @@
 # 1) 임베딩 모델 1회 내려받기(이후 오프라인)
 geryon bootstrap
 
-# 2) 원본(bronze/confluence)을 DB로 적재 — 시간이 좀 걸립니다
+# 2) 원본(~/.geryon/bronze/confluence)을 DB로 적재 — 시간이 좀 걸립니다
 geryon reindex --source confluence --full
 
 # 3) MCP 서버 실행 (AI가 이걸 호출)

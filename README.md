@@ -59,7 +59,7 @@ geryon demo
 #    2)에서 만든 .env 를 열어 CONFLUENCE_URL / USERNAME / API_TOKEN 채우기 (또는 `geryon init`)
 geryon acquire               # 외부 → Bronze 원본 파일(기본: 최근 한 달, 멱등/증분)
 #   --since 2026-01-01 --until 2026-03-31  날짜 구간만 / --all 전체
-geryon ingest --source confluence --path ./bronze/confluence   # Bronze → 검색 DB
+geryon ingest --source confluence   # Bronze(~/.geryon/bronze/confluence) → 검색 DB
 geryon serve                 # MCP 서버 기동
 ```
 > 수집(`acquire`)과 색인(`ingest`)을 나눈 이유·전체 옵션(증분/전체, prune, 데이터 경로 지정)은 [docs/DATA_PIPELINE.md](docs/DATA_PIPELINE.md) 참고. 검색 로직만 바꿔 재색인할 땐 `ingest`만 다시 돌리면 됩니다(API 재호출 0).

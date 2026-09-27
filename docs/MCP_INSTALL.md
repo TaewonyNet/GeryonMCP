@@ -297,15 +297,12 @@ Cline 설정(`Extensions → Cline → MCP Servers`):
 ### 기본 사용법
 
 ```bash
-# 기본 10분 간격, Confluence 소스
+# 기본 10분 간격, 설정된 전체 소스(설정 없는 git/jira 는 건너뜀)
 geryon watch
 
 # 소스·간격 지정
 geryon watch --source confluence --interval 300   # 5분
 geryon watch --source git --interval 1800         # 30분
-
-# 전체 재구축(매회)
-geryon watch --full
 
 # 벡터 임베딩 생략(빠른 키워드 갱신)
 geryon watch --no-vector
@@ -324,6 +321,15 @@ geryon watch --since 2026-01-01 --until 2026-06-30
   ✓ 이미 최신 상태입니다 — 변경 없음(확인 0건).
   다음 싱크: 10:10:00 (약 10분 후) — Ctrl+C 로 중단
 ```
+
+> `--full` 은 watch 에서 거부됩니다(매 주기 전체 재색인·삭제 가드 우회). 전체 재구축은 `geryon sync --full` 로 한 번만.
+> 같은 DB 를 갱신하는 sync 는 한 번에 하나만 돕니다(`<DB>.sync.lock`) — cron 과 watch 를 같이 써도 겹치지 않고 차례를 기다립니다.
+
+### 설정 파일 위치 — 데몬은 실행 폴더가 다르다
+
+`geryon` 은 `./.env`(실행 폴더) → `~/.geryon/.env` 순으로 설정을 읽습니다(앞이 우선, OS 환경변수가 최우선).
+systemd·launchd·cron 은 **실행 폴더가 홈 등으로 바뀌므로**, 데몬으로 돌릴 때는 설정을 `~/.geryon/.env` 에 두세요.
+다른 위치라면 `GERYON_ENV_FILE=/경로/.env` 로 지정합니다.
 
 ### 백그라운드 실행
 
@@ -350,6 +356,8 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/geryon watch --source confluence --interval 600
+# 설정이 ~/.geryon/.env 가 아니면:
+# Environment=GERYON_ENV_FILE=/경로/.env
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal

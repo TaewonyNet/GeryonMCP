@@ -102,6 +102,39 @@ def _geryon_cmd_prefix() -> list[str]:
     return [which] if which else [sys.executable, sys.argv[0]]
 
 
+def _hold_sync_lock():
+    """같은 DB 를 갱신하는 sync 를 한 번에 하나만 돌게 한다(끝날 때까지 기다림).
+
+    watch 데몬과 외부 cron 이 같은 DB 를 동시에 싱크하면 manifest(증분 기준)를 서로 덮어
+    변경분을 잃을 수 있다. 반환한 파일 객체를 프로세스가 끝날 때까지 쥐고 있어야 잠금이 유지된다.
+    """
+    try:
+        import fcntl
+    except ImportError:   # Windows — 잠금 없이 진행
+        return None
+    from pathlib import Path
+    from geryon.config import DB_PATH
+    lock_path = Path(f"{DB_PATH}.sync.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(lock_path, "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"[geryon sync] 다른 sync 가 같은 DB 를 갱신 중 — 끝날 때까지 기다립니다({lock_path}).",
+              file=sys.stderr)
+        fcntl.flock(f, fcntl.LOCK_EX)
+    return f
+
+
+def _reject_shared_bronze_dir(args, multi_source: bool) -> None:
+    """`--bronze-dir` 는 경로 하나다. 여러 소스에 쓰면 confluence·jira·git 이 한 폴더에 섞인다."""
+    if getattr(args, "bronze_dir", None) and multi_source:
+        print("Error: --bronze-dir 는 --source 와 함께 써야 합니다(여러 소스가 한 폴더에 섞임).\n"
+              "       소스별 위치는 GERYON_BRONZE_CONFLUENCE / _JIRA / _GIT 로 지정하세요.",
+              file=sys.stderr)
+        sys.exit(2)
+
+
 def _warn_access_lost(stats: dict) -> None:
     """acquire 결과에 접근 불가 스페이스가 있으면 눈에 띄는 경고 배너 출력."""
     n = (stats or {}).get("access_lost", 0)
@@ -441,8 +474,8 @@ def main() -> None:
 
     # Acquire subcommand — 외부 소스 → Bronze 원본 파일(멱등/증분 수집)
     def _add_acquire_args(p) -> None:
-        p.add_argument("--source", type=str, default=None, help="수집 소스: confluence | git | jira (기본: sync는 전체, acquire/watch는 confluence)")
-        p.add_argument("--bronze-dir", type=str, default=None, help="Bronze 출력 경로(기본: confluence→confluence_db, git→repos)")
+        p.add_argument("--source", type=str, default=None, help="수집 소스: confluence | git | jira (기본: sync/watch 는 설정된 전체 소스, acquire 는 confluence)")
+        p.add_argument("--bronze-dir", type=str, default=None, help="Bronze 경로(기본: ~/.geryon/bronze/<confluence|jira|repos>, GERYON_BRONZE_DIR 로 변경)")
         p.add_argument("--days", type=int, default=None,
                        help="[confluence/jira] 최근 N일 수정분. 미지정 시 기본=DB 워터마크 이후(증분), DB가 비었으면 30일")
         p.add_argument("--since", type=str, default=None,
@@ -578,6 +611,17 @@ def main() -> None:
     elif args.command == "sync":
         from geryon.acquire import ACQUIRER_REGISTRY as _ACQ_REG
         sources = [args.source] if args.source else list(_ACQ_REG.keys())
+        _reject_shared_bronze_dir(args, multi_source=len(sources) > 1)
+        if not args.source:
+            # 소스 미지정(=전체)이면 설정 안 한 소스는 오류가 아니라 건너뜀 — watch 가 매 주기
+            # 「git 수집은 --repo 가 필요」로 실패 보고하던 문제. 명시한 --source 는 그대로 오류.
+            from geryon import config as _cfg
+            unset = {"git": not (getattr(args, "repo", None) or _cfg.GIT_REPOS),
+                     "jira": not (getattr(args, "project", None) or _cfg.JIRA_PROJECTS)}
+            for s in [s for s in sources if unset.get(s)]:
+                print(f"\nSync source: {s} — 설정 없음(GERYON_{'GIT_REPOS' if s == 'git' else 'JIRA_PROJECTS'}), 건너뜀")
+            sources = [s for s in sources if not unset.get(s)]
+        _lock = _hold_sync_lock()  # noqa: F841 — 프로세스 종료까지 쥐고 있어야 한다
         failed: list[str] = []
         for source in sources:
             print(f"\nSync source: {source} (acquire + ingest)")
@@ -612,13 +656,24 @@ def main() -> None:
             print(f"\n⚠ 일부 소스 실패: {', '.join(failed)} (나머지는 정상 처리)", file=sys.stderr)
             sys.exit(1)
     elif args.command == "watch":
+        import os
         import signal
         import time
         import subprocess
         from datetime import timedelta
 
         source = args.source  # None = 전체(confluence+git+jira) — sync 의 멀티소스 경로 상속
+        _reject_shared_bronze_dir(args, multi_source=source is None)
+        if getattr(args, "full", False):
+            # 매 주기 강제 재색인 + Safety Gate 우회 + prune 이 된다. 증분 수집 창과 겹치면 대량 삭제.
+            print("Error: watch 에는 --full 을 쓸 수 없습니다(매 주기 전체 재색인·삭제 가드 우회).\n"
+                  "       전체 재구축은 한 번만: geryon sync --full", file=sys.stderr)
+            sys.exit(2)
         source_label = source or "전체(confluence+git+jira)"
+        # 데몬 출력은 파일·journal 로 간다 — 파이프면 파이썬이 stdout 을 블록 버퍼링해
+        # 진행 로그가 종료 때까지 안 보인다. 자식 sync 도 같은 이유로 버퍼링을 끈다.
+        sys.stdout.reconfigure(line_buffering=True)
+        os.environ["PYTHONUNBUFFERED"] = "1"
         interval = args.interval
         if interval < 5:
             print(f"[geryon watch] --interval {interval} 은(는) 너무 짧아 5초로 조정합니다(타이트 루프 방지).",
@@ -667,8 +722,6 @@ def main() -> None:
                 cmd.append("--force")
             if getattr(args, "no_vector", False):
                 cmd.append("--no-vector")
-            if getattr(args, "full", False):
-                cmd.append("--full")
             if getattr(args, "no_prune", False):
                 cmd.append("--no-prune")
             return cmd

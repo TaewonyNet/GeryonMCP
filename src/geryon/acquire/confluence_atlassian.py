@@ -30,7 +30,6 @@ from geryon.config import default_bronze, ATTACH_MAX_BYTES, ATTACH_SKIP_EXT
 logger = logging.getLogger(__name__)
 
 DEFAULT_DAYS = 30
-DEFAULT_BRONZE = Path(default_bronze("confluence"))
 
 
 # --------------------------------------------------------------------------- #
@@ -304,7 +303,7 @@ def check_space_access(client: "ConfluenceClient", expected: list[str], root: Pa
 
 def acquire(
     days: int | None = DEFAULT_DAYS,
-    bronze_dir: str | Path = DEFAULT_BRONZE,
+    bronze_dir: str | Path | None = None,
     max_pages: int | None = None,
     download_attachments: bool = False,   # 기본 미수집(첨부 본문은 색인 안 됨) — 원할 때만 켠다
     dry_run: bool = False,
@@ -326,7 +325,7 @@ def acquire(
     """
     base_url, user, token = load_credentials()
     client = ConfluenceClient(base_url, user, token)
-    root = Path(bronze_dir)
+    root = Path(bronze_dir) if bronze_dir else Path(default_bronze("confluence"))
     prev_as_of = get_as_of(root)  # 직전 수집 시점(manifest)
     added: list[str] = []
     modified: list[str] = []
@@ -415,7 +414,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=os.getenv("GERYON_LOG_LEVEL", "INFO"))
     ap = argparse.ArgumentParser(description="Confluence REST API → Bronze 수집(최근 N일)")
     ap.add_argument("--days", type=int, default=DEFAULT_DAYS)
-    ap.add_argument("--bronze-dir", default=str(DEFAULT_BRONZE))
+    ap.add_argument("--bronze-dir", default=None)
     ap.add_argument("--max-pages", type=int, default=None)
     ap.add_argument("--no-attachments", action="store_true")
     ap.add_argument("--dry-run", action="store_true")

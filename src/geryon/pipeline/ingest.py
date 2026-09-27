@@ -217,7 +217,11 @@ class IngestionPipeline:
         # "수집이 안 된 것"과 "바뀐 게 없는 것"이 구분되지 않는다.
         seen_any = stats["inserted"] + stats["updated"] + stats["skipped"] + stats["errors"]
         stats["records_seen"] = seen_any
-        if seen_any == 0:
+        if seen_any == 0 and only is not None and not only:
+            # manifest 가 «바뀐 것 없음»을 명시한 증분 — 정상. 경고하면 watch 가 매 주기
+            # 거짓 경보를 내고, 진짜 0건 경보가 그 소음에 묻힌다.
+            stats["no_changes"] = True
+        elif seen_any == 0:
             stats["empty_source"] = True
             logger.warning(
                 "%s 에서 레코드를 한 건도 읽지 못했습니다(mode=%s). Bronze 경로가 "

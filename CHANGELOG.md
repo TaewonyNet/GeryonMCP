@@ -7,6 +7,36 @@
 
 ## [Unreleased] — 1.3.0 목표
 
+### Changed — Bronze 기본 위치 `./bronze` → `~/.geryon/bronze` (실행 폴더 무관)
+예전 기본값은 **명령을 실행한 폴더(CWD)** 의 `bronze/` 였다. 실행 위치마다 Bronze 가 따로
+생겨 DB 하나에 여러 Bronze 가 섞였고, 옛 폴더로 재색인하면 최신 문서가 옛 버전으로 되돌아갔다.
+- 기본: `~/.geryon/bronze/<confluence|jira|repos>` — DB(`~/.geryon/geryon.db`)와 같은 곳.
+- `GERYON_BRONZE_DIR`(베이스), 소스별 `GERYON_BRONZE_CONFLUENCE`·`_JIRA`·`_GIT`(우선).
+  기존 `GERYON_CONFLUENCE_DB_PATH` 도 계속 인식한다.
+- `.env` 의 상대경로는 **그 `.env` 파일 위치 기준**으로 푼다(CWD 기준 아님).
+- **옮기기**: 폴더를 통째로 옮기고 경로 설정만 바꾸면 증분 싱크가 이어진다(DB 는 Bronze 안의
+  상대경로만 저장). 회귀 시험 `tests/test_bronze_paths.py`.
+- **업그레이드**: 설정이 없고 새 위치가 비어 있는데 실행 폴더에 예전 `bronze/<소스>` 가 있으면
+  경고와 함께 그 폴더를 계속 쓴다. `mv ./bronze ~/.geryon/bronze` 또는 `GERYON_BRONZE_DIR` 지정으로 해소.
+- 수집기·커넥터에 흩어져 있던 하드코딩 기본값(`"bronze/…"`)을 모두 `config.default_bronze()` 로 통일.
+
+### Fixed — watch 를 데몬으로 돌릴 때의 결함
+- **설정 파일**: `./.env` 만 읽어 systemd·cron(실행 폴더가 홈) 에서는 자격증명·스페이스를 통째로 잃었다.
+  이제 `./.env` → `~/.geryon/.env` 순으로 읽는다(앞이 우선, OS 환경변수 최우선).
+- **`watch --full` 거부**: 매 주기 강제 재색인 + Safety Gate 우회 + prune 이 되어, 증분 수집 창과
+  겹치면 대량 삭제로 이어진다. 전체 재구축은 `geryon sync --full` 로 한 번만.
+- **동시 실행 직렬화**: 같은 DB 를 갱신하는 `sync` 는 한 번에 하나(`<DB>.sync.lock`, 대기). cron 과
+  watch 가 겹치면 manifest(증분 기준)를 서로 덮어 변경분을 잃을 수 있었다.
+- **`--bronze-dir` 는 `--source` 와 함께**: 소스 미지정(전체)에 쓰면 세 소스가 한 폴더에 섞였다.
+- **설정 안 한 소스는 건너뜀**: 소스 미지정 sync/watch 가 `GERYON_GIT_REPOS`·`GERYON_JIRA_PROJECTS`
+  미설정 소스를 매 주기 오류로 보고하던 문제. 명시한 `--source` 는 그대로 오류.
+- 문서의 "watch 기본 소스 = confluence" 는 사실과 달랐다(실제는 전체) — 문서·도움말 정정.
+- **거짓 0건 경보 제거**: manifest 가 「바뀐 것 없음」을 명시한 증분 실행에도 `empty_source` 경고를 내,
+  watch 가 매 주기 경보를 냈다(진짜 0건 경보가 소음에 묻힘). 이제 `no_changes` 로 구분하고,
+  「바뀌었다는데 못 읽음」은 계속 경보.
+- **로그 버퍼링**: 출력이 파일·journal 이면 stdout 이 블록 버퍼링돼 진행 로그가 종료 때까지 안 보였다.
+  watch 와 자식 sync 모두 줄 단위로 내보낸다.
+
 ### Changed — `RERANK_POOL` 기본값 60 → 20 (랭킹 결과 변경)
 cross-encoder 후보 수는 **키울수록 정확도가 떨어진다**. FTS5 상위는 이미 잘 정렬돼 있어
 아래쪽을 끌어올리면 재정렬이 순위를 흐트러뜨린다(pool 20→60→120 에서 hit 200→169→163 단조 감소).

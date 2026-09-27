@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from bs4 import BeautifulSoup
 
-from geryon.config import DEFAULT_CONFLUENCE_DB_PATH
+from geryon.config import default_bronze
 from geryon.connectors.base import Connector
 from geryon.domain.models import Attachment, RawRecord, SourceType
 
@@ -17,7 +17,7 @@ class ConfluenceConnector(Connector):
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         if db_path is None:
-            self.db_path = DEFAULT_CONFLUENCE_DB_PATH
+            self.db_path = Path(default_bronze("confluence"))
         else:
             self.db_path = Path(db_path)
 

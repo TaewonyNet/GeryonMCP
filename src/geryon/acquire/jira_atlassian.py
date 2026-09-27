@@ -27,7 +27,6 @@ from geryon.config import default_bronze
 logger = logging.getLogger(__name__)
 
 DEFAULT_DAYS = 30
-DEFAULT_BRONZE = Path(default_bronze("jira"))
 _FIELDS = "summary,description,reporter,creator,created,updated,labels,issuetype,status,project"
 
 
@@ -103,7 +102,7 @@ class JiraClient:
 def acquire(
     project: str,
     days: int | None = DEFAULT_DAYS,
-    bronze_dir: str | Path = DEFAULT_BRONZE,
+    bronze_dir: str | Path | None = None,
     max_issues: int | None = None,
     dry_run: bool = False,
     force: bool = False,
@@ -111,7 +110,7 @@ def acquire(
     """프로젝트 이슈를 REST 로 수집해 Bronze 에 기록(멱등). manifest 갱신."""
     base_url, user, token = load_credentials()
     client = JiraClient(base_url, user, token)
-    root = Path(bronze_dir)
+    root = Path(bronze_dir) if bronze_dir else Path(default_bronze("jira"))
     prev_as_of = get_as_of(root)
     added: list[str] = []
     modified: list[str] = []
@@ -176,7 +175,7 @@ if __name__ == "__main__":
     ap.add_argument("--project", required=True)
     ap.add_argument("--days", type=int, default=DEFAULT_DAYS)
     ap.add_argument("--all", action="store_true")
-    ap.add_argument("--bronze-dir", default=str(DEFAULT_BRONZE))
+    ap.add_argument("--bronze-dir", default=None)
     ap.add_argument("--max-issues", type=int, default=None)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true")

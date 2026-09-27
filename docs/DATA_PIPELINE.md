@@ -15,12 +15,23 @@ GeryonMCP는 원본을 **Bronze 파일로 보존**하고, Bronze에서 **검색 
 
 | 대상 | 지정 방법 | 기본값 |
 |---|---|---|
-| **Bronze 원본** | `acquire --bronze-dir <dir>` / `ingest --path <dir>` | `bronze/confluence/` |
+| **Bronze 원본** | 환경변수 `GERYON_BRONZE_DIR=<dir>`(소스별: `GERYON_BRONZE_CONFLUENCE`·`_JIRA`·`_GIT`) / 1회성은 `--bronze-dir`·`--path` | `~/.geryon/bronze/<confluence\|jira\|repos>/` |
 | **검색 DB(Silver)** | 환경변수 `GERYON_DB=<path>` | `~/.geryon/geryon.db` |
+
+Bronze 기본 위치는 **실행 폴더와 무관**합니다. `.env` 에 상대경로를 쓰면 그 `.env` 파일 위치 기준으로 풉니다.
+
+**Bronze 옮기기** — 폴더를 통째로 옮기고 경로 설정만 바꾸면 됩니다. DB 는 Bronze 안의 상대경로만
+저장하고 증분 기준(`manifest.json`)도 폴더와 함께 움직이므로, 재수집·재색인 없이 다음 싱크가 이어집니다.
+```bash
+mv ~/.geryon/bronze /mnt/big/bronze
+echo 'GERYON_BRONZE_DIR=/mnt/big/bronze' >> .env
+```
+⚠️ 옮기지 않고 **빈 새 경로**만 지정하면 최근 변경분만 쌓인 부분 사본이 됩니다. 그 상태에서 `--full` 은
+새 폴더에 없는 문서를 DB 에서 지웁니다.
 
 프로젝트마다 DB를 분리하려면 `GERYON_DB`를 다르게 줍니다:
 ```bash
-GERYON_DB=./proj.db geryon ingest --source confluence --path ./bronze/confluence
+GERYON_DB=./proj.db geryon ingest --source confluence
 GERYON_DB=./proj.db geryon serve          # 같은 DB 로 검색
 ```
 
@@ -34,7 +45,7 @@ geryon acquire --source confluence --days 7              # 최근 7일
 geryon acquire --source confluence --since 2026-01-01    # 2026-01-01 이후 수정분(상한 없음)
 geryon acquire --source confluence --since 2026-01-01 --until 2026-03-31  # 날짜 구간 수집
 geryon acquire --source confluence --all                 # 전체(날짜 제한 없음)
-geryon acquire --source confluence --bronze-dir ./bronze/confluence   # 출력 경로 지정
+geryon acquire --source confluence --bronze-dir ~/data/confluence   # 출력 경로 1회 지정
 ```
 
 | 옵션 | 의미 |
@@ -66,7 +77,7 @@ geryon acquire --source confluence --bronze-dir ./bronze/confluence   # 출력 �
 ## 2) ingest — Bronze → 검색 DB (**기본 증분**)
 
 ```bash
-geryon ingest --source confluence --path ./bronze/confluence        # 기본: 증분(수정된 것만)
+geryon ingest --source confluence        # 기본: 증분(수정된 것만)
 GERYON_DB=./proj.db geryon ingest --source git --path ./my-repo --no-vector
 ```
 
@@ -131,11 +142,11 @@ GERYON_DB=./proj.db geryon sync --source git --repo <url> --no-vector
 따로 돌리려면:
 ```bash
 geryon acquire --source confluence --days 7
-GERYON_DB=./proj.db geryon ingest --source confluence --path ./bronze/confluence
+GERYON_DB=./proj.db geryon ingest --source confluence
 ```
 검색 로직만 바꿔 **재색인할 때는 `ingest`만**(API 재호출 0, 오프라인):
 ```bash
-GERYON_DB=./proj.db geryon ingest --source confluence --path ./bronze/confluence
+GERYON_DB=./proj.db geryon ingest --source confluence
 ```
 
 ---
@@ -145,7 +156,7 @@ GERYON_DB=./proj.db geryon ingest --source confluence --path ./bronze/confluence
 원격 저장소를 **자동 수집(clone/pull)** 합니다(멱등/증분):
 ```bash
 geryon acquire --source git --repo <url> [--repo <url2> ...] [--depth N] [--branch main]
-geryon ingest  --source git --path bronze/repos            # Bronze(repos/) → DB
+geryon ingest  --source git                                # Bronze(repos/) → DB
 # 또는 한 번에:
 geryon sync    --source git --repo <url> --no-vector
 ```
@@ -153,10 +164,10 @@ geryon sync    --source git --repo <url> --no-vector
 | 옵션 | 의미 |
 |---|---|
 | `--repo <url>` | 원격 저장소(여러 번 지정 가능) |
-| `--bronze-dir` | clone 위치(기본 `bronze/repos/`) |
+| `--bronze-dir` | clone 위치(기본 `~/.geryon/bronze/repos/`) |
 | `--depth N` | shallow clone(미지정=full; 커밋 히스토리 색인엔 full 권장) |
 | `--branch` | 브랜치 |
 
 - **멱등/증분**: 없으면 `git clone`, 있으면 `git fetch + reset --hard`(변경분만, 재실행 안전).
-- **Bronze**: `bronze/repos/<repo>/`(작업트리). `GERYON_GIT_CODE/COMMITS/MAX_COMMITS/MAX_BYTES` 로 색인 범위 조절([EXTENDING_SOURCES.md](EXTENDING_SOURCES.md)).
+- **Bronze**: `~/.geryon/bronze/repos/<repo>/`(작업트리). `GERYON_GIT_CODE/COMMITS/MAX_COMMITS/MAX_BYTES` 로 색인 범위 조절([EXTENDING_SOURCES.md](EXTENDING_SOURCES.md)).
 - 코드·커밋·문서가 출처(repo·파일·커밋 URL)와 함께 검색됩니다.

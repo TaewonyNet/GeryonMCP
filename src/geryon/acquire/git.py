@@ -14,6 +14,7 @@ from pathlib import Path
 
 from geryon.acquire.base import Acquirer
 from geryon.acquire.manifest import write_manifest, get_as_of
+from geryon.config import default_bronze
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +59,13 @@ class GitAcquirer(Acquirer):
     def __init__(
         self,
         repos: list[str] | str,
-        bronze_dir: str = "bronze/repos",
+        bronze_dir: str | None = None,
         depth: int | None = None,
         branch: str | None = None,
     ) -> None:
         raw = list(repos) if isinstance(repos, (list, tuple)) else [repos]
         self.repos = [normalize_repo_url(r) for r in raw if normalize_repo_url(r)]
-        self.bronze_dir = Path(bronze_dir)
+        self.bronze_dir = Path(bronze_dir or default_bronze("git"))
         self.depth = depth
         self.branch = branch
 

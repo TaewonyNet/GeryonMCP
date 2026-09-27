@@ -87,6 +87,6 @@ Normalizer·FTS·재정렬·`search`/`advanced_search` 가 그대로 적용됩�
 - **실증**: 실제 코드 repo(1818건 = code 1452·commit 300·doc 66) 색인 시 — 이슈키→커밋, 함수·테이블명→소스 파일, 키워드→문서·커밋이 모두 검색되고 source는 remote URL로 자동 판별(bitbucket/gitlab/github).
 
 ## 자동 수집(acquire)은 향후
-Confluence는 `acquire/confluence_atlassian.py` 가 REST로 Bronze(`bronze/confluence/`)를 채웁니다.
+Confluence는 `acquire/confluence_atlassian.py` 가 REST로 Bronze(`~/.geryon/bronze/confluence/`)를 채웁니다.
 새 소스도 **동일 패턴으로 `acquire/<source>_*.py` 를 추가**하면 수집까지 자동화됩니다. 그 전엔
 소스의 export(JSON 등)를 Bronze 레이아웃에 두고 `ingest` 하면 됩니다.

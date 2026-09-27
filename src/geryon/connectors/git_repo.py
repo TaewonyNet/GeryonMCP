@@ -9,7 +9,7 @@ Bitbucket·GitLab·GitHub 통합(remote URL로 호스트 자동 판별). 일반 
 - 커밋 메세지/히스토리(git log)         : include_commits (기본 True)
 
 Bronze 레이아웃: {db_path}/<repo>/...  (각 하위가 `git clone` 된 저장소; db_path 자체가 repo여도 됨)
-기본 db_path = bronze/repos(SSOT: config.default_bronze). 자격증명 불필요. 환경변수:
+기본 db_path = ~/.geryon/bronze/repos(SSOT: config.default_bronze). 자격증명 불필요. 환경변수:
   GERYON_GIT_CODE=0      코드 색인 끄기
   GERYON_GIT_COMMITS=0   커밋 색인 끄기
   GERYON_GIT_MAX_COMMITS 커밋 최대 수(기본 2000)

@@ -169,3 +169,25 @@ def test_한_건도_못_읽으면_empty_source_로_드러난다(tmp_path):
 
     assert stats["records_seen"] == 0
     assert stats.get("empty_source") is True
+
+
+def test_manifest_가_변경없음이면_empty_source_경보를_내지_않는다(tmp_path):
+    """watch 는 10분마다 증분을 돈다. 바뀐 게 없는 정상 주기에 0건 경보를 내면 진짜 경보가 묻힌다."""
+    from geryon.acquire.manifest import write_manifest
+    bronze = tmp_path / "cb"
+    _mk_page(bronze, "SP", "p1", "문서1", "배포 프로세스")
+    conn = ConfluenceConnector(str(bronze))
+    pipe = _pipeline(tmp_path / "db")
+    pipe.run(conn, incremental=True)                       # 최초 전체
+
+    write_manifest(bronze, source="confluence", as_of="2026-01-01T00:00:00+00:00",
+                   last_change={"since": None, "added": [], "modified": [], "deleted": []})
+    s = pipe.run(conn, incremental=True)
+    assert s["records_seen"] == 0
+    assert s.get("no_changes") is True
+    assert "empty_source" not in s
+
+    write_manifest(bronze, source="confluence", as_of="2026-01-02T00:00:00+00:00",
+                   last_change={"since": None, "added": ["SP/gone"], "modified": [], "deleted": []})
+    s = pipe.run(conn, incremental=True)                   # 바뀌었다는데 못 읽음 → 경보 유지
+    assert s.get("empty_source") is True

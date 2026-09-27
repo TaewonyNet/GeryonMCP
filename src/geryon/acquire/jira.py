@@ -9,7 +9,7 @@ class JiraAcquirer(Acquirer):
     def __init__(
         self,
         project: str | list[str],
-        bronze_dir: str = "bronze/jira",
+        bronze_dir: str | None = None,
         days: int = 30,
         all_issues: bool = False,
         max_issues: int | None = None,

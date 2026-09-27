@@ -8,7 +8,7 @@ from geryon.acquire.confluence_atlassian import acquire as _confluence_acquire, 
 class ConfluenceAcquirer(Acquirer):
     def __init__(
         self,
-        bronze_dir: str = "bronze/confluence",
+        bronze_dir: str | None = None,
         days: int = 30,
         all_pages: bool = False,
         max_pages: int | None = None,

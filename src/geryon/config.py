@@ -1,12 +1,32 @@
 import os
+import sys
 from pathlib import Path
+
+# `.env` 에서 온 키 → 그 파일이 있던 디렉터리. 상대경로 값을 CWD 가 아니라 이 기준으로 푼다.
+_ENV_FILE_DIR: dict[str, Path] = {}
+
+
+def _env_files() -> list[Path]:
+    """읽을 `.env` 목록(앞이 우선). `GERYON_ENV_FILE` 이 있으면 그것만.
+
+    ⚠️ 실행 폴더의 `.env` 만 보면 systemd·cron 처럼 다른 폴더에서 도는 watch/sync 가
+       설정(자격증명·스페이스·Bronze 경로)을 통째로 잃는다. 그래서 `~/.geryon/.env` 도 본다.
+    """
+    explicit = os.getenv("GERYON_ENV_FILE")
+    if explicit:
+        return [Path(os.path.expanduser(explicit))]
+    return [Path(".env"), Path(os.path.expanduser("~/.geryon/.env"))]
 
 
 def _load_dotenv() -> None:
-    """`.env`(없으면 무시)를 환경변수로 로드 — 모든 설정은 env 로 제어한다.
-    이미 설정된 OS 환경변수가 우선(.env 는 미설정 키만 채움). 경로는 `GERYON_ENV_FILE`
-    로 바꿀 수 있다. 외부 의존성 없는 최소 파서(KEY=VALUE, # 주석)."""
-    path = Path(os.getenv("GERYON_ENV_FILE", ".env"))
+    """`.env` 들을 환경변수로 로드 — 모든 설정은 env 로 제어한다.
+    우선순위: OS 환경변수 > ./.env > ~/.geryon/.env (앞에서 채운 키는 뒤가 덮지 않는다).
+    외부 의존성 없는 최소 파서(KEY=VALUE, # 주석)."""
+    for path in _env_files():
+        _load_env_file(path)
+
+
+def _load_env_file(path: Path) -> None:
     if not path.is_file():
         return
     try:
@@ -19,6 +39,7 @@ def _load_dotenv() -> None:
             val = val.strip().strip('"').strip("'")
             if key and key not in os.environ:   # OS env 우선
                 os.environ[key] = val
+                _ENV_FILE_DIR[key] = path.resolve().parent
     except Exception:
         pass
 
@@ -34,23 +55,58 @@ DB_PATH = Path(DB_PATHS[0])  # 대표(단일) — 기존 코드 호환. ingest �
 INDEX_DIR = GERYON_DIR / "index"
 CONFIG_PATH = GERYON_DIR / "config.yaml"
 
-# Bronze 원본 경로 SSOT(소스별). 기본은 CWD 의 bronze/<source> —
-# .gitignore 의 `bronze/` 한 줄로 자동 제외되며, acquire(출력)·ingest/health(입력)가
-# **동일 경로**를 본다(분리 실행 정합). GERYON_BRONZE_DIR 로 베이스 변경 가능.
-BRONZE_BASE = os.getenv("GERYON_BRONZE_DIR", "bronze")
+# Bronze 원본 경로 SSOT(소스별). acquire(출력)·ingest/connector(입력)가 모두 이 함수를 본다.
+#
+# ⚠️ 기본값은 실행 폴더(CWD)와 무관한 `~/.geryon/bronze/<sub>` 다. 예전 기본(CWD 의
+#    `bronze/`)은 실행 위치마다 Bronze 가 따로 생겨, DB 하나에 여러 Bronze 가 섞이고
+#    옛 폴더로 재색인하면 최신 문서가 옛 버전으로 되돌아갔다(실제 발생).
+#
+# 우선순위: 소스별 env > GERYON_BRONZE_DIR/<sub> > ~/.geryon/bronze/<sub>
+#          (설정이 전혀 없고 새 기본이 비었는데 CWD 에 예전 `bronze/<sub>` 가 있으면 그것 + 경고)
+# DB 는 Bronze 안의 상대경로만 저장하므로(`attachments/…`) 폴더를 통째로 옮기고
+# 경로 설정만 바꾸면 증분 싱크가 그대로 이어진다.
+_BRONZE_SUBDIR = {"confluence": "confluence", "jira": "jira", "git": "repos"}
+_BRONZE_SOURCE_ENV = {
+    "confluence": ("GERYON_BRONZE_CONFLUENCE", "GERYON_CONFLUENCE_DB_PATH"),  # 뒤는 구 이름
+    "jira": ("GERYON_BRONZE_JIRA",),
+    "git": ("GERYON_BRONZE_GIT",),
+}
+_legacy_warned: set[str] = set()
+
+
+def _env_path(key: str) -> Path | None:
+    raw = os.getenv(key)
+    if not raw:
+        return None
+    p = Path(os.path.expanduser(raw))
+    if not p.is_absolute():
+        p = _ENV_FILE_DIR.get(key, Path.cwd()) / p
+    return p
 
 
 def default_bronze(source: str) -> str:
-    """소스별 Bronze 기본 경로. acquire·connector·cli 가 모두 이 함수를 참조한다."""
-    return {"git": f"{BRONZE_BASE}/repos", "jira": f"{BRONZE_BASE}/jira"}.get(
-        source, f"{BRONZE_BASE}/confluence"
-    )
+    """소스별 Bronze 경로(절대경로)."""
+    if source not in _BRONZE_SUBDIR:
+        source = "confluence"
+    sub = _BRONZE_SUBDIR[source]
+    for key in _BRONZE_SOURCE_ENV[source]:
+        p = _env_path(key)
+        if p is not None:
+            return str(p)
+    base = _env_path("GERYON_BRONZE_DIR")
+    if base is not None:
+        return str(base / sub)
+    new = GERYON_DIR / "bronze" / sub
+    legacy = Path.cwd() / "bronze" / sub
+    if not new.exists() and legacy.is_dir():
+        if source not in _legacy_warned:
+            _legacy_warned.add(source)
+            print(f"[geryon] ⚠ 예전 기본 위치의 Bronze 를 사용합니다: {legacy}\n"
+                  f"          기본 위치가 {new} 로 바뀌었습니다. 폴더를 옮기거나 "
+                  f"GERYON_BRONZE_DIR 를 지정하세요.", file=sys.stderr)
+        return str(legacy)
+    return str(new)
 
-
-# 하위호환 alias(confluence Bronze 기본 경로). env override 우선.
-DEFAULT_CONFLUENCE_DB_PATH = Path(
-    os.getenv("GERYON_CONFLUENCE_DB_PATH", default_bronze("confluence"))
-)
 
 RECENCY_HALF_LIFE_DAYS = 30.0
 RECENCY_BOOST_CEILING = 0.15
@@ -213,8 +269,13 @@ CONFLUENCE_API_TOKEN=__YOUR_API_TOKEN__
 # GERYON_GIT_USERNAME=
 
 # ── 4) 경로 ──
-# Bronze(원본) 베이스 디렉터리(기본 ./bronze → confluence|repos|jira 하위로 분리).
-# GERYON_BRONZE_DIR=./bronze
+# Bronze(원본) 베이스 디렉터리(기본 ~/.geryon/bronze → confluence|repos|jira 하위로 분리).
+# 실행 폴더와 무관. 상대경로는 이 .env 파일 위치 기준. 폴더를 옮기면 이 값만 바꾸면 된다.
+# GERYON_BRONZE_DIR=~/.geryon/bronze
+# 소스 하나만 다른 곳에 둘 때(베이스보다 우선):
+# GERYON_BRONZE_CONFLUENCE=
+# GERYON_BRONZE_JIRA=
+# GERYON_BRONZE_GIT=
 # 검색 DB(기본 ~/.geryon/geryon.db). 콤마로 여러 개 지정 시 federation 검색.
 # GERYON_DB=~/.geryon/geryon.db
 
