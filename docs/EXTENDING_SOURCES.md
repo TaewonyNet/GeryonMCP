@@ -62,7 +62,7 @@ Normalizer·FTS·재정렬·`search`/`advanced_search` 가 그대로 적용됩�
 | `created_at` / `updated_at` | ISO8601 날짜(신선도·필터) |
 | `tags` | 라벨/태그 목록 |
 | `category` / `hierarchy` | 분류·계층(없으면 hierarchy→category 자동) |
-| `doc_type` | `issue`·`spec`·`guide`… (없으면 제목/계층으로 자동 분류) |
+| `doc_type` | `issue`·`spec`·`guide`·`glossary`… (없으면 제목/계층으로 자동 분류). 범용 규칙은 `index/classify.py`, 조직별 유형은 `GERYON_DOC_TYPE_RULES` 로 추가(상세는 [TUNABLE_PARAMETERS.md](TUNABLE_PARAMETERS.md)) |
 
 ## 예시: Jira (`connectors/jira.py`)
 - **Bronze 레이아웃**: `~/.geryon/jira_db/{project}/{ISSUE-KEY}.json` (Jira REST 이슈 응답 그대로)
@@ -71,7 +71,9 @@ Normalizer·FTS·재정렬·`search`/`advanced_search` 가 그대로 적용됩�
 
 ## 예시: Git 저장소 (`connectors/git_repo.py`)
 - **Bitbucket·GitLab·GitHub 통합** — 모두 Git이라 **하나의 커넥터**로. `.git/config` remote URL로 호스트 자동 판별.
-- **일반 문서 검색과 다름** — 문서뿐 아니라 **소스 코드·커밋 히스토리(메세지)** 까지 색인(`doc_type=doc|code|commit`):
+- **일반 문서 검색과 다름** — 문서뿐 아니라 **소스 코드·커밋 히스토리(메세지)** 까지 색인. 문서
+  파일(`*.md` 등)은 Confluence 와 같은 규칙으로 분류(매칭 없으면 `doc`), 코드 파일은 `code`,
+  커밋은 Conventional Commits 접두사(`feat:`·`fix:`·`docs:`…)가 있으면 그 유형, 없으면 `commit`:
   | 대상 | 내용 | 옵션(기본) |
   |---|---|---|
   | 문서 | `*.md·*.rst·*.txt` → 본문 | 항상 |

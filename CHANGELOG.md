@@ -26,14 +26,53 @@
    ```
    0 이면 `geryon ingest --source confluence --full --no-prune --no-vector`. 링크는 **Bronze 에 있는
    페이지 원문**에서 다시 뽑으므로, Bronze 가 일부만 있으면 링크도 일부만 복구된다.
-3. **스키마 v9·v10** 은 새 버전으로 DB 를 처음 열 때 자동 적용된다(수만 문서에서 약 1초).
+3. **기존 문서의 `doc_type` 이 전부 비어 있다**(v11 이전에 색인한 모든 문서 — doc_type 은
+   content_hash 에 안 들어가 평소 싱크로는 안 채워진다).
+   ```bash
+   python scripts/backfill_doc_type.py --apply
+   ```
+   재수집·재임베딩 없이 DB 안에서만 다시 분류한다(수만 문서도 수 초). 분류 규칙을 고친 뒤
+   전체를 다시 적용하려면 `--force` 추가.
+4. **스키마 v9·v10·v11** 은 새 버전으로 DB 를 처음 열 때 자동 적용된다(수만 문서에서 약 1초).
    옛 버전으로 되돌려 열어도 동작한다(버전이 더 높으면 마이그레이션을 건너뜀).
-4. **(선택) 용량 회수** — v10 이 지운 FTS 공간은 파일 안의 빈 공간으로 남아 재사용된다. 파일 크기까지
+5. **(선택) 용량 회수** — v10 이 지운 FTS 공간은 파일 안의 빈 공간으로 남아 재사용된다. 파일 크기까지
    줄이려면 검색 서버·싱크를 멈춘 상태에서 한 번:
    ```bash
    python -c "import sqlite3,os;sqlite3.connect(os.path.expanduser('~/.geryon/geryon.db')).execute('VACUUM')"
    ```
    (실측: 파일 약 30% 감소, 수만 문서 기준 HDD 1분 내외. 진행 중 DB 크기만큼 여유 공간이 더 필요하다.)
+
+### Fixed — `doc_type`(문서 유형) 분류가 전부 저장되지 않고 버려지던 문제 (스키마 v11)
+`Document.doc_type` 은 Confluence·Jira·Git 커넥터가 채우고 `classify_doc_type()` 규칙 분류기까지
+있었지만, **`documents` 테이블에 그 컬럼이 없었다.** `upsert()` 의 INSERT 문에도 없어 조용히
+버려지고, `get()` 도 읽지 않아 늘 `None` 으로 보였다(분류기는 처음부터 정상 동작 — 저장 경로가
+없었을 뿐). 규칙 분류기가 있는데 아무 효과가 없었던 전형적인 유령 배선.
+- `documents.doc_type` 컬럼 신설, `upsert()`/`get()` 이 저장·조회.
+- **분류 규칙 확장**: 범용 유형 `glossary`(용어집) 추가. 조직 고유 유형은 `GERYON_DOC_TYPE_RULES`
+  로 추가(내장 규칙보다 우선) — 우리 도메인 용어를 core 에 박지 않는다.
+- **Git(코드) 소스도 분류**: 지금까지 git 의 문서 파일(`*.md` 등)은 전부 doc_type="doc" 고정이라
+  Confluence 처럼 guide·spec·meeting 등으로 세분화되지 않았다. 이제 같은 규칙으로 분류하고,
+  매칭 없으면 예전처럼 "doc" 로 남는다. 코드/커밋 파일은 분류 대상이 아니라 그대로.
+- **`advanced_search(doc_type=…)`** 필터 추가 — 문서 유형으로 검색을 좁힐 수 있다.
+- 검증(읽기 전용, 운영 DB 미반영): 약어 하나의 정의가 담긴 긴 용어집 문서는 BM25 가 1회성
+  키워드를 길이로 깎아 기본 검색(`k=10`)에 거의 안 보인 실사례가 있었다(그 약어로 매칭된
+  문서 중 순위가 뒤에서 열 손가락 안). 이제 `advanced_search(doc_type="glossary")` 로 직접 찾을 수 있다 — 단, **검색 랭킹 자체는 이번에
+  바꾸지 않았다**(doc_type 을 점수에 반영하는 것은 측정 없이 넣을 수 없는 별도 변경 — §3 참고).
+- `test_glossary_rule`·`test_v11_*`·`test_doc_type_*`·`test_doc_files_get_classified_like_confluence`.
+- **커밋도 유형으로 검색 가능**: Git 커밋이 Conventional Commits 접두사(`feat:`·`fix:`·`docs:`…,
+  conventionalcommits.org 공개 표준)를 쓰면 그 유형으로 분류하고, 안 쓰면 예전처럼 "commit"
+  그대로(회귀 없음). `advanced_search(doc_type="fix")` 로 전체 히스토리에서 버그 수정 커밋만
+  바로 찾을 수 있다. 실측(운영 git 이력): 전체 커밋의 6.8%가 이 접두사를 쓰고, 매칭된 것은
+  전부 정확히 분류됐다(feat/fix/refactor/docs/perf). `classify_commit_type()`, 테스트
+  `test_commit_type_*`·`test_commits_classified_by_conventional_prefix`.
+- **`scripts/backfill_doc_type.py`**(신규): v11 이전 문서의 `doc_type` 을 재수집 없이 DB 안에서
+  다시 계산(`backfill_dates.py` 와 같은 패턴 — doc_type 도 content_hash 에 안 들어가 증분 싱크로는
+  안 채워진다). 운영 git 이력(수천 건 규모)에 검증: `--full` 재색인(수 분) 과 수 초 내 동일한 분류 결과.
+- **문서**: 분류·랭킹에 쓰이는 상수가 어디 있고 어떻게 고치는지 정리한
+  [docs/TUNABLE_PARAMETERS.md](docs/TUNABLE_PARAMETERS.md) 신설. 조사 중 발견한 기존 드리프트
+  2건을 함께 기록 — recency 반감기가 `config.py`(30일, 쿼리 시점)와 `quality_signals.py`(180일,
+  색인 시점) 두 곳에 독립적으로 박혀 있고, BM25 title 가중치(`5.0`)가 `keyword.py` 의 이름 있는
+  상수와 `advanced.py` 의 리터럴로 중복돼 있다(둘 다 이번에 고치지는 않음 — 문서화만).
 
 ### Removed — 쓰이지 않는 FTS `documents_fts` 와 동기화 트리거 3개 (스키마 v10)
 검색(keyword·advanced)은 v7 부터 조사 정규화 FTS `documents_fts_norm` 만 읽는다. v1.0.0 이후

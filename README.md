@@ -8,7 +8,7 @@
 ## 특징
 - **무비용 · 오프라인 · CPU 전용 · 메모리 4.5GB 권장(최소 1.4GB)** — 유료/온라인 추론 호출 0. 모델은 1회 받고 완전 오프라인.
 - **키워드(BM25) + cross-encoder 재정렬(ONNX)** — 벡터에 의존하지 않고도 정밀한 상위 결과. **한글·영문 다국어**(음차·기술용어 교차언어 매칭).
-- **메타 필드별 상세검색**(`advanced_search`) — 제목·작성자·공간·태그·날짜를 독립 필드로 결합.
+- **메타 필드별 상세검색**(`advanced_search`) — 제목·작성자·공간·유형(doc_type)·태그·날짜를 독립 필드로 결합.
 - **멀티소스 federation** — Confluence·Jira·Git(GitHub/GitLab/Bitbucket, **소스 코드·커밋 포함**)을 **소스별 DB로 두고 검색 시 통합 rerank**(소스 무관 랭킹). 새 소스는 플러그인(검색 코드 변경 0).
 - **증분 색인** — `manifest.last_change`로 **변경분만 재색인**(소스 공통, API 재호출 0).
 - **메달리온 + 사전** — 원본 보존(Bronze) → 정제 DB(Silver) → 개인화 사전(Gold). 수동 사전은 항상 적용(선택), 데이터에서 동의어를 뽑는 **자동 부트스트랩은 opt-in**(기본 OFF).
@@ -101,7 +101,7 @@ geryon serve                 # MCP 서버 기동
 | 도구 | 설명 |
 |---|---|
 | `search` | 통합 검색(키워드 + 재정렬, 동의어·개인화) |
-| `advanced_search` | 메타 필드별 상세검색(제목·작성자·공간·태그·날짜) |
+| `advanced_search` | 메타 필드별 상세검색(제목·작성자·공간·유형·태그·날짜) |
 | `get_document` | 문서 전문 조회 |
 | `get_related` | 연관 문서(링크 기반) |
 | `browse` | 공간/계층 목록 |
@@ -135,6 +135,7 @@ geryon serve                 # MCP 서버 기동
 - [docs/EXTENDING_SOURCES.md](docs/EXTENDING_SOURCES.md) — 새 데이터 소스 추가법(Jira·GitHub 등 멀티소스 확장)
 - [docs/BEGINNER_GUIDE.md](docs/BEGINNER_GUIDE.md) — 초급자용 개념·코드 지도
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — 검색 파이프라인·성능 튜닝(rerank·pool·int8)
+- [docs/TUNABLE_PARAMETERS.md](docs/TUNABLE_PARAMETERS.md) — 분류·랭킹에 쓰이는 상수가 어디 있고 어떻게 고치는지(env vs 소스 수정)
 - [CHANGELOG.md](CHANGELOG.md) — 변경 이력 · [CONTRIBUTING.md](CONTRIBUTING.md) — 기여 가이드
 
 ## 트러블슈팅

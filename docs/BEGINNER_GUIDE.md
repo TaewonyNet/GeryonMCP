@@ -57,8 +57,8 @@
 - 단점: 모든 문서 벡터와 거리를 재야 해서 **느립니다**(우리 DB는 11만 개 조각).
 
 ### (c) 재정렬 — Cross-encoder Rerank ★우리의 핵심
-- 위 방법으로 후보 60개를 추린 뒤, **"질문과 이 문서가 정말 관련 있나?"** 를 한 쌍씩 정밀하게 다시 채점하는 작은 AI 모델입니다.
-- 후보만 보므로(60개) 빠르고, **정답을 위로 끌어올리는 정확도가 가장 큽니다.**
+- 위 방법으로 후보를 추린 뒤(기본 20개, `GERYON_RERANK_POOL`), **"질문과 이 문서가 정말 관련 있나?"** 를 한 쌍씩 정밀하게 다시 채점하는 작은 AI 모델입니다.
+- 후보만 보므로 빠르고, **정답을 위로 끌어올리는 정확도가 가장 큽니다.**
 
 > **GeryonMCP의 선택**: 약한 키워드를 무거운 벡터로 메우는 대신, **좋은 키워드(아래 설명) + 재정렬**로 갑니다. 이게 더 정확하고 가벼웠습니다(자세한 이유는 [`PERFORMANCE.md`](PERFORMANCE.md)).
 
@@ -92,7 +92,7 @@
   ① 동의어 확장: "프로모션" → "프로모션 OR 할인율" 처럼 사전(Gold)으로 넓힘
   │
   ▼  search/hybrid.py : HybridRetriever
-  ② 키워드로 후보 60개 추리기 (search/keyword.py, FTS5 BM25, 제목 가중)
+  ② 키워드로 후보 추리기(기본 20개, `GERYON_RERANK_POOL`) (search/keyword.py, FTS5 BM25, 제목 가중)
   ③ 재정렬: search/rerank.py 의 cross-encoder가 (질문, 문서제목+태그) 쌍을
      정밀 채점해 순서를 다시 매김  ← 정확도의 핵심
   ④ 상위 k개 반환
@@ -111,21 +111,27 @@
 
 | 폴더/파일 | 역할 | 비유 |
 |---|---|---|
-| `acquire/` | 위키에서 원본 수집 | 장보기 |
+| `acquire/` | 위키·Jira·Git 에서 원본 수집(API/clone) | 장보기 |
+| `connectors/` | Bronze 파일 → 표준 RawRecord 변환 | 재료 검수 |
 | `normalize/` | HTML→텍스트 정제, 유형 분류 | 재료 손질 |
+| `index/` | 한국어 조사 정규화·작성자/태그 노이즈 정규화·doc_type 분류 규칙 | 재료 표준화 |
 | `embed/` | 문장→벡터 변환, 본문 쪼개기 | 재료를 숫자로 |
+| `analyze/`(선택) | LLM 기반 회의록/스펙 정제(옵션 의존성) | 전담 셰프 |
 | `store/` | SQLite DB·FTS5·벡터·트리 저장/조회 | 냉장고 |
 | `pipeline/` | 적재 전체 지휘 + 품질신호 계산 | 주방장(준비) |
 | `search/factory.py` | **검색 조립 단일 진입점** | 주문 창구 |
 | `search/keyword.py` | FTS5 BM25 키워드 검색 | 빠른 1차 탐색 |
 | `search/rerank.py` | cross-encoder 재정렬(ONNX) | 정밀 심사 |
 | `search/hybrid.py` | 후보→재정렬, 폴백 RRF | 요리 조립 |
+| `search/advanced.py` | 메타 필드별 상세검색(제목·작성자·공간·유형·날짜) | 맞춤 주문 |
 | `gold/search.py` | 동의어 확장·개인화 | 손님 맞춤 |
 | `search/query.py` | 질의→필터→검색→직렬화 공유 서비스(MCP·CLI 공용) | 공통 주문서 |
-| `mcp/server.py` | MCP 도구(`search` 등 7종) 노출 | 서빙 |
+| `mcp/server.py` | MCP 도구(`search` 등 기본 6종, `reindex` 는 옵트인) 노출 | 서빙 |
 | `cli.py` | 명령줄 도구(`geryon ...`, `geryon search` 포함) | 사장님 콘솔 |
 | `config.py` | 설정값(모델·후보수·스레드 등) | 설정판 |
 | `domain/models.py` | 데이터 모양 정의(Document·Chunk 등) | 그릇 규격 |
+
+> 분류·랭킹에 쓰이는 상수(어디 있고 어떻게 고치는지)는 [TUNABLE_PARAMETERS.md](TUNABLE_PARAMETERS.md).
 
 ---
 
@@ -133,7 +139,7 @@
 
 1. AI(또는 CLI)가 `search("질문", k=10)` 호출 → `mcp/server.py`
 2. `build_searcher()`가 만든 `GoldSearch`가 받아 **동의어 확장**
-3. `HybridRetriever`가 **키워드로 후보 60개** 추림(`keyword.py`)
+3. `HybridRetriever`가 **키워드로 후보** 추림(기본 20개, `keyword.py`)
 4. `rerank.py`의 모델이 **후보를 정밀 재정렬**
 5. 상위 10개를 **제목·URL·발췌**와 함께 반환
 6. (모델 부재 시) 키워드+벡터 RRF로 폴백

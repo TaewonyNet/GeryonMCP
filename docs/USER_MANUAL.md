@@ -139,7 +139,7 @@ geryon sync --source confluence --all   # 날짜 제한 없이 전체
 | 도구 | 용도 | 예시(자연어로 요청하면 클라이언트가 호출) |
 |---|---|---|
 | `search` | 통합 검색 | "배포 가이드 찾아줘" |
-| `advanced_search` | 메타 필드별 상세검색 | "홍길동이 2024년에 쓴 배포 문서" → author·date·본문 분리 |
+| `advanced_search` | 메타 필드별 상세검색 | "홍길동이 2024년에 쓴 배포 문서" → author·date·본문 분리, doc_type 으로 유형 필터(용어집·가이드…) |
 | `get_document` | 문서 전문 | "그 문서 전체 보여줘" |
 | `get_related` | 연관 문서 | "이거랑 관련된 문서" |
 | `browse` | 공간/계층 목록 | "ENG 공간 목록" |

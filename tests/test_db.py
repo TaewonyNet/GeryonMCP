@@ -152,3 +152,33 @@ def test_v9_는_documents가_없어도_마이그레이션을_깨지_않는다(tm
     conn = init_db(db)   # 여기서 예외가 나면 실패
     assert conn.execute("SELECT max(version) FROM schema_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
+
+
+# ═══════════════════════════════════ v11 — documents.doc_type 컬럼 신설
+
+def test_v11_업그레이드가_doc_type_컬럼을_추가한다(tmp_path):
+    """v10 DB(컬럼 없음, documents 에 기존 행 있음) → 최신. 기존 행은 안 깨지고 doc_type=NULL."""
+    db = tmp_path / "v10.db"
+    conn = init_db(db)
+    conn.execute("INSERT INTO documents (doc_id, source, source_id, title, body_markdown, tags, hierarchy, "
+                 "content_hash, ingested_at, raw_meta) "
+                 "VALUES ('d1','confluence','1','t','b','[]','[]','h',datetime('now'),'{}')")
+    conn.execute("DELETE FROM schema_version WHERE version >= 11")
+    conn.commit()
+    conn.close()
+
+    conn = init_db(db)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(documents)")}
+    assert "doc_type" in cols
+    assert conn.execute("SELECT doc_type FROM documents WHERE doc_id='d1'").fetchone()[0] is None
+    assert conn.execute("SELECT max(version) FROM schema_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
+
+
+def test_v11_재실행해도_ALTER가_두_번_안_돈다(tmp_path):
+    """ALTER TABLE ADD COLUMN 은 멱등이 아니다 — 재실행 시 컬럼이 이미 있으면 건너뛰어야 한다."""
+    db = tmp_path / "v11c.db"
+    conn = init_db(db)
+    conn.close()
+    conn = init_db(db)   # 이미 v11 — 여기서 "duplicate column" 예외가 나면 실패
+    conn.close()

@@ -108,6 +108,26 @@ def test_mcp_not_found_handling(temp_db):
     assert "not_found" in str(exc_info.value).lower()
 
 
+def test_advanced_search_doc_type_filter(temp_db):
+    """MCP advanced_search 가 doc_type 파라미터를 실제로 필터에 전달한다."""
+    repo = SqliteRepository(temp_db)
+    repo.upsert(Document(
+        doc_id="g1", source=SourceType.CONFLUENCE, source_id="p1",
+        title="용어 정리", body_markdown="약어 정의 모음", doc_type="glossary",
+        content_hash="hg1", ingested_at=datetime.utcnow(),
+    ))
+    repo.upsert(Document(
+        doc_id="g2", source=SourceType.CONFLUENCE, source_id="p2",
+        title="배포 가이드", body_markdown="절차", doc_type="guide",
+        content_hash="hg2", ingested_at=datetime.utcnow(),
+    ))
+
+    mcp_app = create_mcp_server(db_path=temp_db)
+    tool = mcp_app.get_tool("advanced_search")
+    hits = json.loads(tool(doc_type="glossary"))["hits"]
+    assert [h["doc_id"] for h in hits] == ["g1"]
+
+
 def test_reindex_tool_hidden_by_default(temp_db, monkeypatch):
     """모델이 부르면 전체 모드 + prune(+full 이면 Safety Gate 우회)가 되는 도구 — 기본 비노출."""
     monkeypatch.delenv("GERYON_MCP_REINDEX", raising=False)

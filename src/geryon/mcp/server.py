@@ -101,6 +101,7 @@ def create_mcp_server(db_path: str | Path | None = None) -> FastMCP:
         body: str | None = None,
         author: str | None = None,
         space: str | None = None,
+        doc_type: str | None = None,
         tags: list[str] | None = None,
         categories: list[str] | None = None,
         date_from: str | None = None,
@@ -110,11 +111,14 @@ def create_mcp_server(db_path: str | Path | None = None) -> FastMCP:
     ) -> str:
         """메타데이터 필드별 상세검색. 각 필드를 독립 지정해 AND로 결합한다.
 
-        통합 검색(`search`)과 달리 제목/본문/작성자/공간/태그/분류/날짜를 분리 지정한다.
+        통합 검색(`search`)과 달리 제목/본문/작성자/공간/유형/태그/분류/날짜를 분리 지정한다.
         - title  : 제목에 포함된 단어(조사 무관)
         - body   : 본문에 포함된 단어
         - author : 작성자 부분매칭("홍길동"→"홍길동B (Deactivated)"도 매칭)
         - space  : 공간/저장소 정확매칭
+        - doc_type : 문서 유형 정확매칭(예: "glossary"·"guide"·"meeting"·"spec" — 값 목록은
+          `GERYON_DOC_TYPE_RULES` 로 조직마다 다를 수 있어 모르면 몇 건 검색해 확인할 것.
+          Git 커밋은 Conventional Commits 접두사를 쓰면 "fix"·"feat"·"docs" 등으로도 찾힌다)
         - tags / categories : 다중값(해당 항목 중 하나라도)
         - date_from / date_to : ISO 날짜(updated_at 우선) 범위
         지정한 필드만 조건에 들어가며, 본문·제목이 없어도 메타만으로 검색된다
@@ -122,8 +126,8 @@ def create_mcp_server(db_path: str | Path | None = None) -> FastMCP:
         from geryon.search.advanced import advanced_search as _adv
         hits = _adv(
             repository, title=title, body=body, author=author, space=space,
-            tags=tags, categories=categories, date_from=date_from, date_to=date_to,
-            k=k, offset=offset,
+            doc_type=doc_type, tags=tags, categories=categories,
+            date_from=date_from, date_to=date_to, k=k, offset=offset,
         )
         hits_list = [hit_to_dict(h, include_author=True) for h in hits]
         return json.dumps({"hits": hits_list}, ensure_ascii=False)

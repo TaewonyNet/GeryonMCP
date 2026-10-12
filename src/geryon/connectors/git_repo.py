@@ -1,7 +1,9 @@
 """Git 저장소 커넥터 — 로컬 클론된 repo를 표준 RawRecord로 산출.
 
 Bitbucket·GitLab·GitHub 통합(remote URL로 호스트 자동 판별). 일반 문서 검색과 달리
-**소스 코드·커밋 히스토리(메세지)** 까지 색인한다(doc_type=doc|code|commit).
+**소스 코드·커밋 히스토리(메세지)** 까지 색인한다. doc_type: 문서 파일은 Confluence 와
+같은 규칙으로 분류(매칭 없으면 "doc"), 코드 파일은 "code", 커밋은 Conventional Commits
+접두사(feat:/fix:/docs:…)가 있으면 그 유형, 없으면 "commit".
 
 대상(옵션):
 - 문서 파일(*.md·*.rst·*.txt)          : 항상
@@ -25,6 +27,7 @@ from pathlib import Path
 from geryon.connectors.base import Connector
 from geryon.domain.models import RawRecord, SourceType
 from geryon.config import default_bronze
+from geryon.index.classify import classify_doc_type, classify_commit_type
 
 _DOC_EXT = {".md", ".markdown", ".rst", ".txt", ".adoc"}
 _CODE_EXT = {
@@ -180,14 +183,18 @@ class GitRepoConnector(Connector):
                 author, updated = _git_meta(repo, rel)
                 if updated is None:
                     updated = datetime.fromtimestamp(fpath.stat().st_mtime, tz=timezone.utc).isoformat()
+                title = (_first_heading(body) if is_doc else None) or rel
+                hierarchy = [repo_name] + list(Path(rel).parts[:-1])
+                # 문서 파일(README 등)은 Confluence 와 같은 규칙으로 세분화(guide·spec·meeting…).
+                # 코드 파일은 산문이 아니라 분류 대상이 아니므로 "code" 그대로 둔다.
+                doc_type = (classify_doc_type(title, hierarchy) or "doc") if is_doc else "code"
                 yield RawRecord(
                     source=source, source_id=f"{repo_name}:{rel}",
                     raw_body=body, raw_format="markdown" if is_doc else "text",
-                    title=(_first_heading(body) if is_doc else None) or rel,
+                    title=title,
                     url=_file_url(base, source, branch, rel), space_or_repo=repo_name,
                     metadata={"author": author, "updated_at": updated, "tags": [],
-                              "doc_type": "doc" if is_doc else "code",
-                              "hierarchy": [repo_name] + list(Path(rel).parts[:-1])},
+                              "doc_type": doc_type, "hierarchy": hierarchy},
                 )
 
     # ── 커밋(메세지/히스토리) ──
@@ -210,12 +217,15 @@ class GitRepoConnector(Connector):
                 continue
             h, author, date, subject = parts[0], parts[1], parts[2], parts[3]
             body = parts[4] if len(parts) > 4 else ""
+            # Conventional Commits 접두사(feat:/fix:/docs:…)를 쓰면 그 유형으로, 아니면
+            # 예전처럼 "commit" — 안 쓰는 저장소엔 영향 없음(실측: 매칭 시 전부 정확히 구분됨).
+            doc_type = classify_commit_type(subject) or "commit"
             yield RawRecord(
                 source=source, source_id=f"{repo_name}@{h[:12]}",
                 raw_body=(subject + "\n" + body).strip(), raw_format="text",
                 title=subject or h[:12], url=_commit_url(base, source, h), space_or_repo=repo_name,
                 metadata={"author": author or None, "updated_at": date or None, "tags": [],
-                          "doc_type": "commit", "hierarchy": [repo_name, "commits"]},
+                          "doc_type": doc_type, "hierarchy": [repo_name, "commits"]},
             )
 
     def iter_raw(self, only: set[str] | None = None) -> Iterator[RawRecord]:

@@ -31,6 +31,7 @@ def advanced_search(
     body: str | None = None,
     author: str | None = None,
     space: str | None = None,
+    doc_type: str | None = None,
     tags: list[str] | None = None,
     categories: list[str] | None = None,
     date_from: str | None = None,
@@ -62,6 +63,9 @@ def advanced_search(
     if space:
         where.append("d.space_or_repo = ?")
         params.append(space)
+    if doc_type:
+        where.append("d.doc_type = ?")
+        params.append(doc_type)
     if tags:
         ph = ", ".join("?" for _ in tags)
         where.append(f"EXISTS (SELECT 1 FROM document_tags t WHERE t.doc_id=d.doc_id AND t.tag IN ({ph}))")

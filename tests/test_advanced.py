@@ -15,12 +15,12 @@ def repo(tmp_path):
     docs = [
         Document(doc_id="d1", source=SourceType.CONFLUENCE, source_id="s1", space_or_repo="ENG",
                  url=None, title="서버 배포 가이드", body_markdown="무중단 배포 절차", summary=None,
-                 tags=["ops"], hierarchy=[], author="홍길동B (Deactivated)",
+                 tags=["ops"], hierarchy=[], author="홍길동B (Deactivated)", doc_type="guide",
                  created_at=datetime(2024,3,1,tzinfo=timezone.utc), updated_at=datetime(2024,3,1,tzinfo=timezone.utc),
                  content_hash="h1", ingested_at=datetime(2024,3,1,tzinfo=timezone.utc)),
         Document(doc_id="d2", source=SourceType.CONFLUENCE, source_id="s2", space_or_repo="HR",
                  url=None, title="휴가 정책", body_markdown="연차 사용 규정", summary=None,
-                 tags=["policy"], hierarchy=[], author="김철수",
+                 tags=["policy"], hierarchy=[], author="김철수", doc_type="glossary",
                  created_at=datetime(2023,1,1,tzinfo=timezone.utc), updated_at=datetime(2023,1,1,tzinfo=timezone.utc),
                  content_hash="h2", ingested_at=datetime(2023,1,1,tzinfo=timezone.utc)),
     ]
@@ -37,6 +37,11 @@ def test_author_partial_match(repo):
 def test_field_combination_and(repo):
     assert [h.doc_id for h in advanced_search(repo, title="배포", author="홍길동")] == ["d1"]
     assert advanced_search(repo, title="배포", author="김철수") == []
+
+def test_doc_type_filter(repo):
+    assert [h.doc_id for h in advanced_search(repo, doc_type="glossary")] == ["d2"]
+    assert [h.doc_id for h in advanced_search(repo, doc_type="guide")] == ["d1"]
+    assert advanced_search(repo, doc_type="meeting") == []
 
 def test_space_and_date(repo):
     assert [h.doc_id for h in advanced_search(repo, space="HR")] == ["d2"]

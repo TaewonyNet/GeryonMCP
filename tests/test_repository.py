@@ -104,3 +104,22 @@ def test_repository_fts_sync_and_query(temp_db):
     cursor.execute("SELECT doc_id FROM documents_fts_norm WHERE documents_fts_norm MATCH ?", (q,))
     results_after = cursor.fetchall()
     assert len(results_after) == 0
+
+
+def test_doc_type_round_trips(temp_db):
+    """doc_type 이 DB 컬럼에 저장되고 get() 으로 돌아온다 — 예전엔 조용히 버려졌다."""
+    repo = SqliteRepository(temp_db)
+    doc = Document(
+        doc_id="doc3", source=SourceType.CONFLUENCE, source_id="99",
+        title="용어 정리", body_markdown="약어 정의 모음", doc_type="glossary",
+        content_hash="hash_dt_1", ingested_at=datetime.utcnow(),
+    )
+    repo.upsert(doc)
+
+    fetched = repo.get("doc3")
+    assert fetched.doc_type == "glossary"
+
+    row = repo.get_connection().execute(
+        "SELECT doc_type FROM documents WHERE doc_id = ?", ("doc3",)
+    ).fetchone()
+    assert row[0] == "glossary"

@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from geryon.config import DB_PATH, ensure_directories
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 DDL_STATEMENTS = [
     """
@@ -237,7 +237,17 @@ _V10_DDL = [
     "DROP TABLE IF EXISTS documents_fts;",
 ]
 
-DDL_STATEMENTS = DDL_STATEMENTS + _V4_DDL + _V5_DDL + _V6_DDL + _V7_DDL + _V8_DDL + _V9_DDL
+# v11: `documents.doc_type` 컬럼 신설.
+#
+# `Document.doc_type`(normalizer가 classify_doc_type() 으로 채움)을 저장할 컬럼이 DB에
+# 없었다 — upsert() 의 INSERT 문에 없어 조용히 버려지고, get() 도 안 읽어 항상 None 으로
+# 보였다. 분류기는 처음부터 정상 동작했는데 저장 경로가 없었던 것(유령 배선).
+_V11_DDL = [
+    "ALTER TABLE documents ADD COLUMN doc_type TEXT;",
+    "CREATE INDEX IF NOT EXISTS idx_documents_doc_type ON documents(doc_type);",
+]
+
+DDL_STATEMENTS = DDL_STATEMENTS + _V4_DDL + _V5_DDL + _V6_DDL + _V7_DDL + _V8_DDL + _V9_DDL + _V11_DDL
 
 # 버전별 증분 마이그레이션 (idempotent — 모든 문은 IF NOT EXISTS)
 MIGRATIONS: dict[int, list[str]] = {
@@ -299,6 +309,15 @@ def _apply_migrations(conn: sqlite3.Connection, from_version: int, to_version: i
                 _ = conn.execute(
                     "DELETE FROM documents_fts_norm WHERE doc_id NOT IN (SELECT doc_id FROM documents);"
                 )
+        # v11: documents.doc_type 컬럼. `documents` 를 참조하므로 테이블이 있을 때만,
+        #      ALTER 는 멱등이 아니므로 컬럼이 아직 없을 때만 실행한다.
+        if v == 11:
+            docs_exists = conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='documents'"
+            ).fetchone()[0]
+            if docs_exists and not _column_exists(conn, "documents", "doc_type"):
+                for stmt in _V11_DDL:
+                    _ = conn.execute(stmt)
         # v7: 조사 정규화 FTS 백필 — 기존 documents를 normalize 해 documents_fts_norm 채움(재임베딩 불필요).
         if v == 7:
             docs_exists = conn.execute(

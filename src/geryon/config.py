@@ -294,6 +294,13 @@ CONFLUENCE_API_TOKEN=__YOUR_API_TOKEN__
 # GERYON_ATTACH_MAX_MB=50
 # GERYON_ATTACH_SKIP_EXT=zip,7z,rar,tar,gz,mp4,mov,mp3,iso,exe,dmg
 
+# ── 6-1) 문서 유형 분류(doc_type) ──
+# 제목·계층·태그로 문서 유형(meeting/guide/spec/glossary 등)을 규칙 기반으로 분류해 저장.
+# Confluence·Git(README 등 문서 파일) 양쪽에 동일하게 적용된다. advanced_search(doc_type=…)
+# 로 필터링 가능. 내장 규칙은 범용 유형만 다룬다 — 조직 고유 유형/용어는 아래로 추가(내장보다 우선):
+#   형식: type1:kw1|kw2,type2:kw3   (쉼표로 유형 구분, |로 키워드 구분)
+# GERYON_DOC_TYPE_RULES=runbook:온콜|당직,rfc:rfc|제안서
+
 # ── 7) 검색·재정렬 튜닝 (기본값 권장) ──
 # GERYON_RERANK=1                       # 재정렬 on/off(0=하이브리드 폴백)
 # GERYON_RERANK_MODEL=BAAI/bge-reranker-base

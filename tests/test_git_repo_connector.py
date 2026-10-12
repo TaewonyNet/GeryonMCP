@@ -47,6 +47,30 @@ def test_commit_to_document(tmp_path):
     doc=Normalizer().normalize(rec)
     assert "PROJ-7" in doc.title and doc.doc_type=="commit" and doc.author=="테스터"
 
+def test_doc_files_get_classified_like_confluence(tmp_path):
+    """git 의 문서 파일도 Confluence 와 같은 규칙으로 세분화된다(코드 분류 가능)."""
+    _mk_repo(tmp_path, "p", "git@github.com:o/p.git",
+             {"README.md": "# 설치 가이드", "docs/arch.md": "# 설계 문서", "notes.md": "# 아무 제목",
+              "main.py": "print(1)"})
+    recs = {r.source_id.split(":")[-1]: r for r in
+            GitRepoConnector(tmp_path, include_code=True, include_commits=False).iter_raw()}
+    assert recs["README.md"].metadata["doc_type"] == "guide"
+    assert recs["docs/arch.md"].metadata["doc_type"] == "design"
+    assert recs["notes.md"].metadata["doc_type"] == "doc"     # 매칭 없으면 예전 그대로
+    assert recs["main.py"].metadata["doc_type"] == "code"     # 코드는 분류 대상 아님
+
+
+def test_commits_classified_by_conventional_prefix(tmp_path):
+    """feat:/fix: 등을 쓰는 저장소는 커밋이 세분화되고, 안 쓰는 저장소는 그대로 "commit"."""
+    repo = _mk_repo(tmp_path, "p", "git@github.com:o/p.git", {"a.md": "# A"}, msg="fix: 널 포인터 수정")
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "일반 작업 메모"], check=True)
+    recs = [r for r in GitRepoConnector(tmp_path, include_code=False, include_commits=True).iter_raw()
+            if r.metadata["doc_type"] in ("fix", "commit")]
+    by_subject = {r.title: r.metadata["doc_type"] for r in recs}
+    assert by_subject["fix: 널 포인터 수정"] == "fix"
+    assert by_subject["일반 작업 메모"] == "commit"   # 접두사 없는 저장소는 회귀 없이 예전 그대로
+
+
 def test_host_detection(tmp_path):
     _mk_repo(tmp_path,"gl","https://gitlab.com/x/gl.git",{"a.md":"# A"})
     recs=list(GitRepoConnector(tmp_path,include_commits=False).iter_raw())

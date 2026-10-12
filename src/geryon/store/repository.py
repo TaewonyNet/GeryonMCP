@@ -110,8 +110,9 @@ class SqliteRepository(Repository):
                 INSERT OR REPLACE INTO documents (
                     doc_id, source, source_id, space_or_repo, url, title,
                     body_markdown, summary, tags, hierarchy, author,
-                    created_at, updated_at, content_hash, ingested_at, raw_meta, static_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    created_at, updated_at, content_hash, ingested_at, raw_meta, static_score,
+                    doc_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     doc.doc_id,
@@ -131,6 +132,7 @@ class SqliteRepository(Repository):
                     ingested_at_str,
                     raw_meta_json,
                     preserved_static_score,
+                    doc.doc_type,
                 )
             )
 
@@ -187,7 +189,7 @@ class SqliteRepository(Repository):
             """
             SELECT doc_id, source, source_id, space_or_repo, url, title,
                    body_markdown, summary, tags, hierarchy, author,
-                   created_at, updated_at, content_hash, ingested_at, raw_meta
+                   created_at, updated_at, content_hash, ingested_at, raw_meta, doc_type
             FROM documents WHERE doc_id = ?;
             """,
             (doc_id,)
@@ -246,7 +248,8 @@ class SqliteRepository(Repository):
             attachments=attachments,
             raw_meta=raw_meta,
             content_hash=cast(str, doc_row[13]),
-            ingested_at=ingested_at
+            ingested_at=ingested_at,
+            doc_type=cast(str | None, doc_row[16])
         )
 
     def iter_all(self) -> Iterator[Document]:
